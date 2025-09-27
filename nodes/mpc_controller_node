@@ -147,17 +147,20 @@ class MPCControllerNode:
         control = info.get('control') if info else None
         predicted_state = info.get('predicted_state') if info else None
 
+        residuals = info.get('residuals') if info else None
+
         rospy.loginfo(
-            'MPC log: status=%d pos=%s vel=%s ref_pos=%s ref_vel=%s ref_acc=%s control=%s command=%s pred_state=%s',
+            'MPC log: status=%d pos=%s vel=%s ref_pos=%s ref_vel=%s ref_acc=%s control=%s command=%s pred_state=%s res=%s',
             status,
             np.array2string(self._state['position'], precision=3),
             np.array2string(self._state['velocity'], precision=3),
             np.array2string(ref_pos, precision=3),
             np.array2string(ref_vel, precision=3),
             np.array2string(ref_acc, precision=3),
-            np.array2string(control if control is not None else np.zeros(4), precision=3),
+            np.array2string(control if control is not None else np.zeros(self._controller.nu), precision=3),
             np.array2string(self._last_command, precision=3),
-            np.array2string(predicted_state if predicted_state is not None else np.zeros(13), precision=3),
+            np.array2string(predicted_state if predicted_state is not None else np.zeros(self._controller.nx), precision=3),
+            np.array2string(np.asarray(residuals) if residuals is not None else np.zeros(4), precision=3),
         )
 
 

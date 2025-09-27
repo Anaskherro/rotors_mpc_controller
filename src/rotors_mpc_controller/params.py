@@ -119,6 +119,10 @@ def _coerce_vehicle(cfg: Dict[str, Any]) -> None:
     cfg['rotor_moment_constant'] = float(cfg.get('rotor_moment_constant', 0.016))
     cfg['motor_min_speed'] = float(cfg.get('motor_min_speed', 0.0))
     cfg['motor_max_speed'] = float(cfg.get('motor_max_speed', 2000.0))
+    drag = cfg.get('drag_coefficients', [0.05, 0.05, 0.1])
+    if len(drag) != 3:
+        raise ValueError('vehicle.drag_coefficients must contain 3 elements')
+    cfg['drag_coefficients'] = [float(v) for v in drag]
 
 
 def _coerce_controller(cfg: Dict[str, Any]) -> None:

@@ -65,6 +65,10 @@ class PositionNMPC:
         controller_cfg = params['controller']
         thrust_limits = controller_cfg.get('thrust_limits', [4.0, 32.0])
         self._thrust_limits = (float(thrust_limits[0]), float(thrust_limits[1]))
+        vehicle_drag = params['vehicle'].get('drag_coefficients', [0.05, 0.05, 0.10])
+        if len(vehicle_drag) != 3:
+            raise ValueError('vehicle.drag_coefficients must contain 3 values')
+        self.drag_coefficients = np.asarray(vehicle_drag, dtype=float)
 
         codegen_dir = Path(solver_cfg.get('codegen_directory',
                                           Path.home() / '.cache' / 'rotors_mpc_controller'))
@@ -188,7 +192,10 @@ class PositionNMPC:
 
         R = _rotation_matrix(roll, pitch, yaw)
         thrust_body = ca.vertcat(0.0, 0.0, thrust)
-        accel_world = (1.0 / self.mass) * ca.mtimes(R, thrust_body) - ca.vertcat(0.0, 0.0, self.gravity)
+        drag = ca.vertcat(self.drag_coefficients[0] * vx,
+                          self.drag_coefficients[1] * vy,
+                          self.drag_coefficients[2] * vz)
+        accel_world = (1.0 / self.mass) * ca.mtimes(R, thrust_body) - drag - ca.vertcat(0.0, 0.0, self.gravity)
 
         tan_pitch = ca.tan(pitch)
         sec_pitch = 1.0 / ca.cos(pitch)
@@ -279,11 +286,15 @@ class PositionNMPC:
         status = solver.solve()
         if status != 0:
             self._prev_solution_valid = False
+            self._prev_solution['u'].fill(0.0)
+            self._prev_solution['x'].fill(0.0)
+            self._last_thrust = self.mass * self.gravity
             fallback_command = np.array([0.0, 0.0, 0.0, self._last_thrust], dtype=float)
             info = {
                 'control': np.zeros(self.nu),
                 'reference_state': first_ref_state if first_ref_state is not None else np.zeros(self.nx),
                 'predicted_state': x0,
+                'residuals': self._solver.get_residuals(),
             }
             return fallback_command, status, info
 
@@ -308,6 +319,7 @@ class PositionNMPC:
             'control': u0.copy(),
             'reference_state': first_ref_state if first_ref_state is not None else np.zeros(self.nx),
             'predicted_state': x_next.copy(),
+            'residuals': self._solver.get_residuals(),
         }
         return command, status, info
 
