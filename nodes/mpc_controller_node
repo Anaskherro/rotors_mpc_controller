@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+
+"""ROS front-end for the acados-based NMPC controller."""
+
+from __future__ import annotations
+
+import math
+from typing import Optional
+
+import numpy as np
+import rospy
+from geometry_msgs.msg import PoseStamped
+from mav_msgs.msg import RollPitchYawrateThrust
+from nav_msgs.msg import Odometry
+
+from rotors_mpc_controller import (PositionNMPC, ReferenceGenerator,
+                                   compute_attitude_from_accel, load_params,
+                                   quaternion_to_euler)
+
+
+class MPCControllerNode:
+    def __init__(self) -> None:
+        self._params = load_params()
+        self._controller = PositionNMPC(self._params)
+        self._reference = ReferenceGenerator(self._params['reference'])
+        self._topics = self._params['topics']
+        node_cfg = self._params.get('node', {})
+        self._rate_hz = float(node_cfg.get('rate', 50.0))
+        self._yaw_rate_gain = float(node_cfg.get('yaw_rate_gain', 1.0))
+        self._yaw_rate_limit = float(node_cfg.get('yaw_rate_limit', 1.5))
+        max_tilt_deg = float(node_cfg.get('max_tilt_deg', 22.5))
+        self._max_tilt = math.radians(max_tilt_deg)
+        self._log_interval = float(node_cfg.get('log_interval', 3.0))
+        self._last_log_time = rospy.Time.now()
+        self._mass = float(self._params['vehicle']['mass'])
+        self._gravity = float(self._params['world']['gravity'])
+        thrust_limits = self._params['controller']['thrust_limits']
+        self._thrust_limits = (float(thrust_limits[0]), float(thrust_limits[1]))
+
+        self._state: Optional[dict] = None
+        self._last_command = np.zeros(4, dtype=float)
+
+        self._command_pub = rospy.Publisher(self._topics['command'],
+                                            RollPitchYawrateThrust,
+                                            queue_size=1)
+        rospy.Subscriber(self._topics['state'], Odometry, self._odom_cb, queue_size=1)
+        rospy.Subscriber(self._topics.get('reference', '~setpoint'), PoseStamped,
+                         self._reference_cb, queue_size=1)
+
+        self._timer = rospy.Timer(rospy.Duration(1.0 / self._rate_hz), self._loop)
+        rospy.loginfo('mpc_controller_node: ready (dt=%.3f, horizon=%d)',
+                      self._controller.dt, self._controller.horizon)
+
+    def _reference_cb(self, msg: PoseStamped) -> None:
+        position = np.array([msg.pose.position.x,
+                             msg.pose.position.y,
+                             msg.pose.position.z], dtype=float)
+        yaw = self._yaw_from_quaternion(msg.pose.orientation.x,
+                                        msg.pose.orientation.y,
+                                        msg.pose.orientation.z,
+                                        msg.pose.orientation.w)
+        self._reference.set_target(position=position, yaw=yaw)
+
+    def _odom_cb(self, msg: Odometry) -> None:
+        pose = msg.pose.pose
+        twist = msg.twist.twist
+
+        px, py, pz = pose.position.x, pose.position.y, pose.position.z
+        vx_body = np.array([twist.linear.x, twist.linear.y, twist.linear.z], dtype=float)
+
+        roll, pitch, yaw = quaternion_to_euler(pose.orientation.x,
+                                               pose.orientation.y,
+                                               pose.orientation.z,
+                                               pose.orientation.w)
+
+        rot = self._rotation_matrix(roll, pitch, yaw)
+        velocity_world = rot @ vx_body
+
+        self._state = {
+            'position': np.array([px, py, pz], dtype=float),
+            'velocity': velocity_world,
+            'attitude': (roll, pitch, yaw),
+            'body_rates': np.array([twist.angular.x, twist.angular.y, twist.angular.z], dtype=float),
+        }
+
+    def _loop(self, _: rospy.TimerEvent) -> None:
+        if self._state is None:
+            return
+
+        reference = self._reference.build_horizon(self._controller.horizon,
+                                                  self._controller.dt)
+
+        acc_cmd, status = self._controller.solve(self._state['position'],
+                                                 self._state['velocity'],
+                                                 reference)
+        if status != 0:
+            rospy.logwarn_throttle(1.0, 'mpc_controller_node: solver returned status %d', status)
+            if self._last_command is not None:
+                self._publish_command(self._last_command)
+                self._maybe_log(reference, acc_cmd, status)
+            return
+
+        yaw_target = reference['yaws'][0]
+        roll_cmd, pitch_cmd, thrust_cmd = compute_attitude_from_accel(acc_cmd,
+                                                                      self._mass,
+                                                                      self._gravity,
+                                                                      self._thrust_limits,
+                                                                      yaw_target)
+        roll_cmd = float(np.clip(roll_cmd, -self._max_tilt, self._max_tilt))
+        pitch_cmd = float(np.clip(pitch_cmd, -self._max_tilt, self._max_tilt))
+        yaw_current = self._state['attitude'][2]
+        yaw_error = math.atan2(math.sin(yaw_target - yaw_current),
+                               math.cos(yaw_target - yaw_current))
+        yaw_rate_cmd = self._yaw_rate_gain * yaw_error
+        yaw_rate_cmd = float(np.clip(yaw_rate_cmd, -self._yaw_rate_limit, self._yaw_rate_limit))
+
+        command = np.array([roll_cmd, pitch_cmd, yaw_rate_cmd, thrust_cmd], dtype=float)
+        self._publish_command(command)
+        self._last_command = command
+        self._maybe_log(reference, acc_cmd, status)
+
+    @staticmethod
+    def _yaw_from_quaternion(qx: float, qy: float, qz: float, qw: float) -> float:
+        _, _, yaw = quaternion_to_euler(qx, qy, qz, qw)
+        return yaw
+
+    @staticmethod
+    def _rotation_matrix(roll: float, pitch: float, yaw: float) -> np.ndarray:
+        cr = math.cos(roll)
+        sr = math.sin(roll)
+        cp = math.cos(pitch)
+        sp = math.sin(pitch)
+        cy = math.cos(yaw)
+        sy = math.sin(yaw)
+        return np.array([
+            [cp * cy, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [cp * sy, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ], dtype=float)
+
+    def _publish_command(self, command: np.ndarray) -> None:
+        msg = RollPitchYawrateThrust()
+        msg.header.stamp = rospy.Time.now()
+        msg.header.frame_id = self._reference.frame
+        msg.roll = float(command[0])
+        msg.pitch = float(command[1])
+        msg.yaw_rate = float(command[2])
+        msg.thrust.z = float(command[3])
+        self._command_pub.publish(msg)
+
+    def _maybe_log(self, reference: dict, acc_cmd: np.ndarray, status: int) -> None:
+        now = rospy.Time.now()
+        if (now - self._last_log_time).to_sec() < self._log_interval:
+            return
+        self._last_log_time = now
+
+        ref_pos = reference['positions'][0]
+        ref_vel = reference['velocities'][0]
+        ref_acc = reference['accelerations'][0]
+
+        rospy.loginfo(
+            'MPC log: status=%d pos=%s vel=%s ref_pos=%s ref_vel=%s ref_acc=%s acc_cmd=%s command=%s',
+            status,
+            np.array2string(self._state['position'], precision=3),
+            np.array2string(self._state['velocity'], precision=3),
+            np.array2string(ref_pos, precision=3),
+            np.array2string(ref_vel, precision=3),
+            np.array2string(ref_acc, precision=3),
+            np.array2string(acc_cmd, precision=3),
+            np.array2string(self._last_command, precision=3),
+        )
+
+
+def main() -> None:
+    rospy.init_node('mpc_controller_node')
+    MPCControllerNode()
+    rospy.spin()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except rospy.ROSInterruptException:
+        pass

@@ -1,0 +1,27 @@
+<launch>
+  <!-- Define a launch argument for real-time factor -->
+  <arg name="real_time_factor" default="1.0" />
+
+
+
+  <!-- Set Gazebo simulation parameters to fix the RTF -->
+  <!-- These need to be set before Gazebo starts -->
+  <param name="/gazebo/max_step_size" value="$(eval 0.001 / float(arg('real_time_factor')))" />
+  <param name="/gazebo/real_time_update_rate" value="1000" />
+
+  <!-- Include the MAV simulation (Hummingbird) -->
+  <include file="$(find rotors_gazebo)/launch/mav.launch">
+    <arg name="mav_name" value="hummingbird" />
+  </include>
+
+  <!-- Controller nodes -->
+  <node pkg="rotors_mpc_controller"
+        type="mpc_controller_node"
+        name="mpc_controller_node"
+        output="screen" />
+
+  <node pkg="rotors_mpc_controller"
+        type="low_level_controller_node"
+        name="low_level_controller_node"
+        output="screen" />
+</launch>

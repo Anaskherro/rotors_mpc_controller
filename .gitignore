@@ -1,0 +1,11 @@
+# Catkin / build artifacts
+build/
+devel/
+logs/
+install/
+.bazel-*
+*.pyc
+__pycache__/
+.acados_template
+# Solver codegen cache
+.cache/
