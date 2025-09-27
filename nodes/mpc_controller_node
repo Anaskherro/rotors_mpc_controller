@@ -14,8 +14,7 @@ from mav_msgs.msg import RollPitchYawrateThrust
 from nav_msgs.msg import Odometry
 
 from rotors_mpc_controller import (PositionNMPC, ReferenceGenerator,
-                                   compute_attitude_from_accel, load_params,
-                                   quaternion_to_euler)
+                                   load_params, quaternion_to_euler)
 
 
 class MPCControllerNode:
@@ -32,8 +31,6 @@ class MPCControllerNode:
         self._max_tilt = math.radians(max_tilt_deg)
         self._log_interval = float(node_cfg.get('log_interval', 3.0))
         self._last_log_time = rospy.Time.now()
-        self._mass = float(self._params['vehicle']['mass'])
-        self._gravity = float(self._params['world']['gravity'])
         thrust_limits = self._params['controller']['thrust_limits']
         self._thrust_limits = (float(thrust_limits[0]), float(thrust_limits[1]))
 
@@ -90,34 +87,24 @@ class MPCControllerNode:
         reference = self._reference.build_horizon(self._controller.horizon,
                                                   self._controller.dt)
 
-        acc_cmd, status = self._controller.solve(self._state['position'],
-                                                 self._state['velocity'],
-                                                 reference)
+        command_raw, status, info = self._controller.solve(self._state,
+                                                           reference)
         if status != 0:
             rospy.logwarn_throttle(1.0, 'mpc_controller_node: solver returned status %d', status)
             if self._last_command is not None:
                 self._publish_command(self._last_command)
-                self._maybe_log(reference, acc_cmd, status)
+                self._maybe_log(reference, info, status)
             return
 
-        yaw_target = reference['yaws'][0]
-        roll_cmd, pitch_cmd, thrust_cmd = compute_attitude_from_accel(acc_cmd,
-                                                                      self._mass,
-                                                                      self._gravity,
-                                                                      self._thrust_limits,
-                                                                      yaw_target)
-        roll_cmd = float(np.clip(roll_cmd, -self._max_tilt, self._max_tilt))
-        pitch_cmd = float(np.clip(pitch_cmd, -self._max_tilt, self._max_tilt))
-        yaw_current = self._state['attitude'][2]
-        yaw_error = math.atan2(math.sin(yaw_target - yaw_current),
-                               math.cos(yaw_target - yaw_current))
-        yaw_rate_cmd = self._yaw_rate_gain * yaw_error
-        yaw_rate_cmd = float(np.clip(yaw_rate_cmd, -self._yaw_rate_limit, self._yaw_rate_limit))
+        roll_cmd = float(np.clip(command_raw[0], -self._max_tilt, self._max_tilt))
+        pitch_cmd = float(np.clip(command_raw[1], -self._max_tilt, self._max_tilt))
+        yaw_rate_cmd = float(np.clip(command_raw[2], -self._yaw_rate_limit, self._yaw_rate_limit))
+        thrust_cmd = float(np.clip(command_raw[3], self._thrust_limits[0], self._thrust_limits[1]))
 
         command = np.array([roll_cmd, pitch_cmd, yaw_rate_cmd, thrust_cmd], dtype=float)
         self._publish_command(command)
         self._last_command = command
-        self._maybe_log(reference, acc_cmd, status)
+        self._maybe_log(reference, info, status)
 
     @staticmethod
     def _yaw_from_quaternion(qx: float, qy: float, qz: float, qw: float) -> float:
@@ -148,7 +135,7 @@ class MPCControllerNode:
         msg.thrust.z = float(command[3])
         self._command_pub.publish(msg)
 
-    def _maybe_log(self, reference: dict, acc_cmd: np.ndarray, status: int) -> None:
+    def _maybe_log(self, reference: dict, info: dict | None, status: int) -> None:
         now = rospy.Time.now()
         if (now - self._last_log_time).to_sec() < self._log_interval:
             return
@@ -157,17 +144,20 @@ class MPCControllerNode:
         ref_pos = reference['positions'][0]
         ref_vel = reference['velocities'][0]
         ref_acc = reference['accelerations'][0]
+        control = info.get('control') if info else None
+        predicted_state = info.get('predicted_state') if info else None
 
         rospy.loginfo(
-            'MPC log: status=%d pos=%s vel=%s ref_pos=%s ref_vel=%s ref_acc=%s acc_cmd=%s command=%s',
+            'MPC log: status=%d pos=%s vel=%s ref_pos=%s ref_vel=%s ref_acc=%s control=%s command=%s pred_state=%s',
             status,
             np.array2string(self._state['position'], precision=3),
             np.array2string(self._state['velocity'], precision=3),
             np.array2string(ref_pos, precision=3),
             np.array2string(ref_vel, precision=3),
             np.array2string(ref_acc, precision=3),
-            np.array2string(acc_cmd, precision=3),
+            np.array2string(control if control is not None else np.zeros(4), precision=3),
             np.array2string(self._last_command, precision=3),
+            np.array2string(predicted_state if predicted_state is not None else np.zeros(13), precision=3),
         )
 
 

@@ -25,21 +25,46 @@ class ControllerParams:
     dt: float
     position_weight: np.ndarray
     velocity_weight: np.ndarray
+    attitude_weight: np.ndarray
+    rate_weight: np.ndarray
+    thrust_weight: float
+    terminal_position_weight: np.ndarray
+    terminal_velocity_weight: np.ndarray
+    terminal_attitude_weight: np.ndarray
+    terminal_rate_weight: np.ndarray
+    terminal_thrust_weight: float
     control_weight: np.ndarray
-    terminal_weight: np.ndarray
-    accel_limits: np.ndarray
+    control_lower: np.ndarray
+    control_upper: np.ndarray
     regularization: float
     codegen_directory: Path
 
 
+def _rotation_matrix(roll, pitch, yaw):
+    cr = ca.cos(roll)
+    sr = ca.sin(roll)
+    cp = ca.cos(pitch)
+    sp = ca.sin(pitch)
+    cy = ca.cos(yaw)
+    sy = ca.sin(yaw)
+    return ca.vertcat(
+        ca.horzcat(cp * cy, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr),
+        ca.horzcat(cp * sy, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr),
+        ca.horzcat(-sp, cp * sr, cp * cr),
+    )
+
+
 class PositionNMPC:
-    """Nonlinear MPC based on a triple-integrator model in acados."""
+    """Nonlinear MPC with attitude and thrust dynamics."""
 
     def __init__(self, params: Dict[str, Dict[str, object]]) -> None:
         solver_cfg = params['solver']
         self.mass = float(params['vehicle']['mass'])
         world_cfg = params.get('world', {})
         self.gravity = float(world_cfg.get('gravity', 9.81))
+        controller_cfg = params['controller']
+        thrust_limits = controller_cfg.get('thrust_limits', [4.0, 32.0])
+        self._thrust_limits = (float(thrust_limits[0]), float(thrust_limits[1]))
 
         codegen_dir = Path(solver_cfg.get('codegen_directory',
                                           Path.home() / '.cache' / 'rotors_mpc_controller'))
@@ -48,22 +73,25 @@ class PositionNMPC:
         self.config = ControllerParams(
             horizon_steps=int(solver_cfg['horizon_steps']),
             dt=float(solver_cfg['dt']),
-            position_weight=np.asarray(solver_cfg.get('position_weight', [10.0, 10.0, 10.0]),
-                                       dtype=float),
-            velocity_weight=np.asarray(solver_cfg.get('velocity_weight', [2.0, 2.0, 2.0]),
-                                       dtype=float),
-            control_weight=np.asarray(solver_cfg.get('control_weight', [0.5, 0.5, 0.5]),
-                                      dtype=float),
-            terminal_weight=np.asarray(solver_cfg.get('terminal_weight',
-                                                       [10.0, 10.0, 15.0, 2.0, 2.0, 3.0]),
-                                       dtype=float),
-            accel_limits=np.asarray(solver_cfg.get('accel_limits', [6.0, 6.0, 6.0]), dtype=float),
-            regularization=float(solver_cfg.get('regularization', 1e-6)),
+            position_weight=np.asarray(solver_cfg['position_weight'], dtype=float),
+            velocity_weight=np.asarray(solver_cfg['velocity_weight'], dtype=float),
+            attitude_weight=np.asarray(solver_cfg['attitude_weight'], dtype=float),
+            rate_weight=np.asarray(solver_cfg['rate_weight'], dtype=float),
+            thrust_weight=float(solver_cfg['thrust_weight']),
+            terminal_position_weight=np.asarray(solver_cfg['terminal_position_weight'], dtype=float),
+            terminal_velocity_weight=np.asarray(solver_cfg['terminal_velocity_weight'], dtype=float),
+            terminal_attitude_weight=np.asarray(solver_cfg['terminal_attitude_weight'], dtype=float),
+            terminal_rate_weight=np.asarray(solver_cfg['terminal_rate_weight'], dtype=float),
+            terminal_thrust_weight=float(solver_cfg['terminal_thrust_weight']),
+            control_weight=np.asarray(solver_cfg['control_weight'], dtype=float),
+            control_lower=np.asarray(solver_cfg['control_limits']['lower'], dtype=float),
+            control_upper=np.asarray(solver_cfg['control_limits']['upper'], dtype=float),
+            regularization=float(solver_cfg.get('regularization', 1e-2)),
             codegen_directory=codegen_dir,
         )
 
-        self.nx = 6
-        self.nu = 3
+        self.nx = 13
+        self.nu = 4
         self.ny = self.nx + self.nu
         self.ny_e = self.nx
 
@@ -73,13 +101,14 @@ class PositionNMPC:
             'x': np.zeros((self.config.horizon_steps + 1, self.nx), dtype=float),
         }
         self._prev_solution_valid = False
+        self._last_thrust = self.mass * self.gravity
 
     # ------------------------------------------------------------------
     def _create_solver(self) -> AcadosOcpSolver:
         ocp = AcadosOcp()
         ocp.model = self._build_model()
 
-        ocp.dims.N = self.config.horizon_steps
+        ocp.solver_options.N_horizon = self.config.horizon_steps
         ocp.solver_options.tf = self.config.horizon_steps * self.config.dt
         ocp.solver_options.qp_solver = 'PARTIAL_CONDENSING_HPIPM'
         ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
@@ -95,7 +124,6 @@ class PositionNMPC:
         ocp.code_export_directory = str(self.config.codegen_directory)
         ocp.json_file = 'rotors_nmpc_ocp.json'
 
-        # Linear least squares cost.
         ocp.cost.cost_type = 'LINEAR_LS'
         ocp.cost.cost_type_e = 'LINEAR_LS'
 
@@ -107,50 +135,83 @@ class PositionNMPC:
         ocp.cost.Vu = Vu
         ocp.cost.Vx_e = np.eye(self.nx)
 
-        stage_weights = np.concatenate((self.config.position_weight,
-                                         self.config.velocity_weight,
-                                         self.config.control_weight))
-        ocp.cost.W = np.diag(stage_weights)
-        ocp.cost.W_e = np.diag(self.config.terminal_weight)
+        stage_state_weights = np.concatenate((
+            self.config.position_weight,
+            self.config.velocity_weight,
+            self.config.attitude_weight,
+            self.config.rate_weight,
+            [self.config.thrust_weight],
+        ))
+        ocp.cost.W = np.diag(np.concatenate((stage_state_weights, self.config.control_weight)))
+
+        terminal_state_weights = np.concatenate((
+            self.config.terminal_position_weight,
+            self.config.terminal_velocity_weight,
+            self.config.terminal_attitude_weight,
+            self.config.terminal_rate_weight,
+            [self.config.terminal_thrust_weight],
+        ))
+        ocp.cost.W_e = np.diag(terminal_state_weights)
         ocp.cost.yref = np.zeros(self.ny)
         ocp.cost.yref_e = np.zeros(self.ny_e)
 
-        # Input bounds (acceleration command limits).
         ocp.constraints.idxbu = np.arange(self.nu)
-        ocp.constraints.lbu = -self.config.accel_limits
-        ocp.constraints.ubu = self.config.accel_limits
+        ocp.constraints.lbu = self.config.control_lower
+        ocp.constraints.ubu = self.config.control_upper
 
-        # Initial state equality constraint will be set at runtime.
         ocp.constraints.idxbx_0 = np.arange(self.nx)
         ocp.constraints.lbx_0 = np.zeros(self.nx)
         ocp.constraints.ubx_0 = np.zeros(self.nx)
 
         ocp.constraints.idxbx = np.arange(self.nx)
-        lbx = -1e6 * np.ones(self.nx)
-        ubx = 1e6 * np.ones(self.nx)
-        ocp.constraints.lbx = lbx
-        ocp.constraints.ubx = ubx
+        ocp.constraints.lbx = -1e6 * np.ones(self.nx)
+        ocp.constraints.ubx = 1e6 * np.ones(self.nx)
 
-        solver = AcadosOcpSolver(ocp, json_file=ocp.json_file)
-        return solver
+        return AcadosOcpSolver(ocp, json_file=ocp.json_file)
 
     # ------------------------------------------------------------------
     def _build_model(self) -> AcadosModel:
         model = AcadosModel()
-        model.name = 'rotors_position'
+        model.name = 'rotors_full_dynamics'
 
         x = ca.SX.sym('x', self.nx)
         u = ca.SX.sym('u', self.nu)
         xdot = ca.SX.sym('xdot', self.nx)
 
-        vx = x[3]
-        vy = x[4]
-        vz = x[5]
-        ax = u[0]
-        ay = u[1]
-        az = u[2]
+        px, py, pz = x[0], x[1], x[2]
+        vx, vy, vz = x[3], x[4], x[5]
+        roll, pitch, yaw = x[6], x[7], x[8]
+        p_body, q_body, r_body = x[9], x[10], x[11]
+        thrust = x[12]
 
-        f_expl = ca.vertcat(vx, vy, vz, ax, ay, az)
+        roll_acc, pitch_acc, yaw_acc, thrust_rate = u[0], u[1], u[2], u[3]
+
+        R = _rotation_matrix(roll, pitch, yaw)
+        thrust_body = ca.vertcat(0.0, 0.0, thrust)
+        accel_world = (1.0 / self.mass) * ca.mtimes(R, thrust_body) - ca.vertcat(0.0, 0.0, self.gravity)
+
+        tan_pitch = ca.tan(pitch)
+        sec_pitch = 1.0 / ca.cos(pitch)
+
+        roll_dot = p_body + q_body * ca.sin(roll) * tan_pitch + r_body * ca.cos(roll) * tan_pitch
+        pitch_dot = q_body * ca.cos(roll) - r_body * ca.sin(roll)
+        yaw_dot = q_body * ca.sin(roll) * sec_pitch + r_body * ca.cos(roll) * sec_pitch
+
+        f_expl = ca.vertcat(
+            vx,
+            vy,
+            vz,
+            accel_world[0],
+            accel_world[1],
+            accel_world[2],
+            roll_dot,
+            pitch_dot,
+            yaw_dot,
+            roll_acc,
+            pitch_acc,
+            yaw_acc,
+            thrust_rate,
+        )
 
         model.f_impl_expr = xdot - f_expl
         model.f_expl_expr = f_expl
@@ -172,33 +233,24 @@ class PositionNMPC:
 
     # ------------------------------------------------------------------
     def solve(self,
-              position: np.ndarray,
-              velocity: np.ndarray,
-              reference: Dict[str, np.ndarray]) -> Tuple[np.ndarray, int]:
-        """Solve the NMPC problem for the current state.
+              state: Dict[str, np.ndarray],
+              reference: Dict[str, np.ndarray]) -> Tuple[np.ndarray, int, Dict[str, np.ndarray]]:
+        position = state['position']
+        velocity = state['velocity']
+        roll, pitch, yaw = state['attitude']
+        body_rates = state['body_rates']
 
-        Parameters
-        ----------
-        position : np.ndarray
-            Current position in world frame (3,).
-        velocity : np.ndarray
-            Current velocity in world frame (3,).
-        reference : dict
-            Reference dictionary with keys ``positions``, ``velocities`` and
-            ``accelerations``; each array must have length ``horizon + 1``.
-        """
+        x0 = np.concatenate((position,
+                             velocity,
+                             np.array([roll, pitch, yaw], dtype=float),
+                             body_rates,
+                             np.array([self._last_thrust], dtype=float)))
 
-        if position.shape[0] != 3 or velocity.shape[0] != 3:
-            raise ValueError('Position and velocity must be 3D vectors.')
-
-        x0 = np.concatenate((position, velocity))
         solver = self._solver
-
         solver.set(0, 'lbx', x0)
         solver.set(0, 'ubx', x0)
         solver.set(0, 'x', x0)
 
-        # Warm start with previous solution.
         if self._prev_solution_valid:
             solver.set(0, 'u', self._prev_solution['u'][0])
             for stage in range(1, self.config.horizon_steps):
@@ -208,37 +260,72 @@ class PositionNMPC:
         else:
             zero_u = np.zeros(self.nu)
             solver.set(0, 'u', zero_u)
-            for stage in range(1, self.config.horizon_steps):
+            for stage in range(1, self.config.horizon_steps + 1):
                 solver.set(stage, 'x', x0)
+            for stage in range(self.config.horizon_steps):
                 solver.set(stage, 'u', zero_u)
-            solver.set(self.config.horizon_steps, 'x', x0)
 
+        first_ref_state = None
         for stage in range(self.config.horizon_steps):
-            yref = np.hstack((reference['positions'][stage],
-                               reference['velocities'][stage],
-                               reference['accelerations'][stage]))
+            state_ref = self._stage_reference(reference, stage)
+            if stage == 0:
+                first_ref_state = state_ref.copy()
+            yref = np.concatenate((state_ref, np.zeros(self.nu)))
             solver.set(stage, 'yref', yref)
 
-        terminal_ref = np.hstack((reference['positions'][-1], reference['velocities'][-1]))
+        terminal_ref = self._stage_reference(reference, self.config.horizon_steps)
         solver.set(self.config.horizon_steps, 'yref', terminal_ref)
 
         status = solver.solve()
         if status != 0:
             self._prev_solution_valid = False
-            return np.zeros(self.nu), status
+            fallback_command = np.array([0.0, 0.0, 0.0, self._last_thrust], dtype=float)
+            info = {
+                'control': np.zeros(self.nu),
+                'reference_state': first_ref_state if first_ref_state is not None else np.zeros(self.nx),
+                'predicted_state': x0,
+            }
+            return fallback_command, status, info
 
         u0 = np.asarray(solver.get(0, 'u')).reshape(-1)
 
-        # Cache trajectories for warm start.
         for stage in range(self.config.horizon_steps):
             self._prev_solution['u'][stage] = np.asarray(solver.get(stage, 'u')).reshape(-1)
             self._prev_solution['x'][stage] = np.asarray(solver.get(stage, 'x')).reshape(-1)
-        self._prev_solution['x'][-1] = np.asarray(
-            solver.get(self.config.horizon_steps, 'x')
-        ).reshape(-1)
+        self._prev_solution['x'][-1] = np.asarray(solver.get(self.config.horizon_steps, 'x')).reshape(-1)
         self._prev_solution_valid = True
 
-        return u0, status
+        x_next = np.asarray(solver.get(1, 'x')).reshape(-1)
+        roll_cmd = x_next[6]
+        pitch_cmd = x_next[7]
+        yaw_rate_cmd = x_next[11]
+        thrust_cmd = float(np.clip(x_next[12], self._thrust_limits[0], self._thrust_limits[1]))
+        self._last_thrust = thrust_cmd
+
+        command = np.array([roll_cmd, pitch_cmd, yaw_rate_cmd, thrust_cmd], dtype=float)
+
+        info = {
+            'control': u0.copy(),
+            'reference_state': first_ref_state if first_ref_state is not None else np.zeros(self.nx),
+            'predicted_state': x_next.copy(),
+        }
+        return command, status, info
+
+    # ------------------------------------------------------------------
+    def _stage_reference(self, reference: Dict[str, np.ndarray], index: int) -> np.ndarray:
+        pos = reference['positions'][index]
+        vel = reference['velocities'][index]
+        acc = reference['accelerations'][index]
+        yaw = reference['yaws'][index]
+        roll_ref, pitch_ref, thrust_ref = compute_attitude_from_accel(
+            acc, self.mass, self.gravity, self._thrust_limits, yaw)
+
+        state_ref = np.hstack((pos,
+                               vel,
+                               [roll_ref, pitch_ref, yaw],
+                               np.zeros(3),
+                               [thrust_ref]))
+        return state_ref
 
 
 def compute_attitude_from_accel(acc_cmd: np.ndarray,
@@ -248,9 +335,7 @@ def compute_attitude_from_accel(acc_cmd: np.ndarray,
                                 yaw_ref: float) -> Tuple[float, float, float]:
     """Map desired world-frame acceleration to roll, pitch, thrust."""
 
-    if acc_cmd.shape[0] != 3:
-        raise ValueError('Acceleration command must have length 3')
-
+    acc_cmd = np.asarray(acc_cmd, dtype=float)
     desired_force = mass * (acc_cmd + np.array([0.0, 0.0, gravity], dtype=float))
     norm_force = np.linalg.norm(desired_force)
     if norm_force < 1e-6:
@@ -258,8 +343,7 @@ def compute_attitude_from_accel(acc_cmd: np.ndarray,
         norm_force = thrust_limits[0]
 
     thrust = float(np.clip(norm_force, thrust_limits[0], thrust_limits[1]))
-
-    z_b = desired_force / np.linalg.norm(desired_force)
+    z_b = desired_force / norm_force
 
     yaw = yaw_ref
     y_c = np.array([-math.sin(yaw), math.cos(yaw), 0.0], dtype=float)

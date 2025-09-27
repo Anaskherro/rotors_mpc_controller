@@ -67,16 +67,43 @@ def _recursive_update(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[s
     return base
 
 
+def _ensure_length(cfg: Dict[str, Any], key: str, length: int, default: list[float]) -> list[float]:
+    values = cfg.get(key, default)
+    if len(values) != length:
+        raise ValueError(f"solver.{key} must contain {length} elements")
+    coerced = [float(v) for v in values]
+    cfg[key] = coerced
+    return coerced
+
+
 def _coerce_solver(cfg: Dict[str, Any]) -> None:
     cfg['horizon_steps'] = int(cfg['horizon_steps'])
     cfg['dt'] = float(cfg['dt'])
-    cfg['position_weight'] = [float(v) for v in cfg.get('position_weight', [10.0, 10.0, 10.0])]
-    cfg['velocity_weight'] = [float(v) for v in cfg.get('velocity_weight', [2.0, 2.0, 2.0])]
-    cfg['control_weight'] = [float(v) for v in cfg.get('control_weight', [0.5, 0.5, 0.5])]
-    cfg['terminal_weight'] = [float(v) for v in cfg.get('terminal_weight',
-                                                       [20.0, 20.0, 30.0, 5.0, 5.0, 7.0])]
-    cfg['accel_limits'] = [float(v) for v in cfg.get('accel_limits', [6.0, 6.0, 6.0])]
-    cfg['regularization'] = float(cfg.get('regularization', 1e-6))
+
+    _ensure_length(cfg, 'position_weight', 3, [25.0, 25.0, 40.0])
+    _ensure_length(cfg, 'velocity_weight', 3, [8.0, 8.0, 10.0])
+    _ensure_length(cfg, 'attitude_weight', 3, [15.0, 15.0, 8.0])
+    _ensure_length(cfg, 'rate_weight', 3, [4.0, 4.0, 2.5])
+    cfg['thrust_weight'] = float(cfg.get('thrust_weight', 6.0))
+
+    _ensure_length(cfg, 'terminal_position_weight', 3, [90.0, 90.0, 130.0])
+    _ensure_length(cfg, 'terminal_velocity_weight', 3, [15.0, 15.0, 20.0])
+    _ensure_length(cfg, 'terminal_attitude_weight', 3, [25.0, 25.0, 12.0])
+    _ensure_length(cfg, 'terminal_rate_weight', 3, [6.0, 6.0, 3.0])
+    cfg['terminal_thrust_weight'] = float(cfg.get('terminal_thrust_weight', 8.0))
+
+    _ensure_length(cfg, 'control_weight', 4, [1.5, 1.5, 1.2, 0.8])
+
+    control_limits = cfg.get('control_limits', {})
+    lower = control_limits.get('lower', [-4.0, -4.0, -4.0, -10.0])
+    upper = control_limits.get('upper', [4.0, 4.0, 4.0, 10.0])
+    if len(lower) != 4 or len(upper) != 4:
+        raise ValueError('solver.control_limits.lower/upper must contain 4 elements')
+    control_limits['lower'] = [float(v) for v in lower]
+    control_limits['upper'] = [float(v) for v in upper]
+    cfg['control_limits'] = control_limits
+
+    cfg['regularization'] = float(cfg.get('regularization', 5e-2))
     if 'codegen_directory' in cfg:
         cfg['codegen_directory'] = str(Path(cfg['codegen_directory']).expanduser())
 

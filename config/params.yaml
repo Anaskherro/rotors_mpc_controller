@@ -1,12 +1,21 @@
 solver:
   horizon_steps: 30
   dt: 0.04
-  position_weight: [100.0, 100.0, 80.0]
+  position_weight: [25.0, 25.0, 40.0]
   velocity_weight: [8.0, 8.0, 10.0]
-  control_weight: [1.8, 1.8, 2.4]
-  terminal_weight: [100.0, 100.0, 80.0, 20.0, 20.0, 10.0]
-  accel_limits: [6.0, 6.0, 6.0]
-  regularization: 5.0e-03
+  attitude_weight: [15.0, 15.0, 8.0]
+  rate_weight: [4.0, 4.0, 2.5]
+  thrust_weight: 6.0
+  terminal_position_weight: [90.0, 90.0, 130.0]
+  terminal_velocity_weight: [15.0, 15.0, 20.0]
+  terminal_attitude_weight: [25.0, 25.0, 12.0]
+  terminal_rate_weight: [6.0, 6.0, 3.0]
+  terminal_thrust_weight: 8.0
+  control_weight: [1.5, 1.5, 1.2, 0.8]
+  control_limits:
+    lower: [-4.0, -4.0, -4.0, -10.0]
+    upper: [4.0, 4.0, 4.0, 10.0]
+  regularization: 5.0e-02
   codegen_directory: ~/.cache/rotors_mpc_controller/acados
 
 vehicle:
@@ -18,17 +27,17 @@ vehicle:
   rotor_force_constant: 8.54858e-06
   rotor_moment_constant: 0.016
   motor_min_speed: 50.0
-  motor_max_speed: 838.0
+  motor_max_speed: 1500.0
 
 controller:
-  thrust_limits: [4.0, 8.0]
+  thrust_limits: [4.0, 32.0]
   attitude_gains:
     roll:
-      kp: 4.0
-      kd: 1.2
+      kp: 9.0
+      kd: 3.2
     pitch:
-      kp: 4.0
-      kd: 1.2
+      kp: 9.0
+      kd: 3.2
     yaw:
       kp: 1.5
       kd: 0.35
