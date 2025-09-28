@@ -255,6 +255,8 @@ class MPCControllerNode:
         config.solver_accel_limit_y = self._params['solver']['accel_limits'][1]
         config.solver_accel_limit_z = self._params['solver']['accel_limits'][2]
         config.solver_regularization = self._params['solver']['regularization']
+        if hasattr(config, 'solver_iter_max'):
+            config.solver_iter_max = self._params['solver']['iter_max']
         config.solver_codegen_directory = self._params['solver'].get('codegen_directory', '')
 
         config.vehicle_mass = self._params['vehicle']['mass']

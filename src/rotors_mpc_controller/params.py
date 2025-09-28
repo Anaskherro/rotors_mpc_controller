@@ -77,6 +77,7 @@ def _coerce_solver(cfg: Dict[str, Any]) -> None:
                                                        [20.0, 20.0, 30.0, 5.0, 5.0, 7.0])]
     cfg['accel_limits'] = [float(v) for v in cfg.get('accel_limits', [6.0, 6.0, 6.0])]
     cfg['regularization'] = float(cfg.get('regularization', 1e-6))
+    cfg['iter_max'] = int(cfg.get('iter_max', 2))
     if 'codegen_directory' in cfg:
         cfg['codegen_directory'] = str(Path(cfg['codegen_directory']).expanduser())
 
@@ -217,6 +218,7 @@ def apply_dynamic_configuration(params: Dict[str, Any], config: Any) -> Tuple[Di
                                   float(config.solver_accel_limit_y),
                                   float(config.solver_accel_limit_z)]
     solver_cfg['regularization'] = float(config.solver_regularization)
+    solver_cfg['iter_max'] = int(getattr(config, 'solver_iter_max', solver_cfg['iter_max']))
     solver_cfg['codegen_directory'] = str(config.solver_codegen_directory)
 
     vehicle_cfg = params['vehicle']

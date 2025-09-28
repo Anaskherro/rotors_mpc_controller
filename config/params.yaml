@@ -7,6 +7,7 @@ solver:
   terminal_weight: [100.0, 100.0, 80.0, 20.0, 20.0, 10.0]
   accel_limits: [6.0, 6.0, 6.0]
   regularization: 5.0e-03
+  iter_max: 2
   codegen_directory: ~/.cache/rotors_mpc_controller/acados
 
 vehicle:

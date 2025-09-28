@@ -32,6 +32,7 @@ class ControllerParams:
     terminal_weight: np.ndarray
     accel_limits: np.ndarray
     regularization: float
+    solver_iter_max: int
     codegen_directory: Path
 
 
@@ -81,6 +82,7 @@ class PositionNMPC:
                                        dtype=float),
             accel_limits=np.asarray(solver_cfg.get('accel_limits', [6.0, 6.0, 6.0]), dtype=float),
             regularization=float(solver_cfg.get('regularization', 1e-6)),
+            solver_iter_max=int(solver_cfg.get('iter_max', 2)),
             codegen_directory=codegen_dir,
         )
 
@@ -112,7 +114,7 @@ class PositionNMPC:
         ocp.solver_options.hessian_approx = 'GAUSS_NEWTON'
         ocp.solver_options.integrator_type = 'ERK'
         ocp.solver_options.qp_solver_cond_N = min(self.config.horizon_steps, 5)
-        ocp.solver_options.qp_solver_iter_max = 50
+        ocp.solver_options.qp_solver_iter_max = self.config.solver_iter_max
         ocp.solver_options.collocation_type = 'GAUSS_RADAU_IIA'
         ocp.solver_options.sim_method_num_stages = 2
         ocp.solver_options.sim_method_num_steps = 2
@@ -126,7 +128,8 @@ class PositionNMPC:
                                   tuple(self.config.control_weight),
                                   tuple(self.config.terminal_weight),
                                   tuple(self.config.accel_limits),
-                                  self.config.regularization))
+                                  self.config.regularization,
+                                  self.config.solver_iter_max))
         digest = hashlib.sha1(codegen_signature.encode('utf-8')).hexdigest()[:10]
         self.codegen_path = (self.config.codegen_directory /
                              f'h{self.config.horizon_steps}_dt{int(self.config.dt * 1e6)}_{digest}')
