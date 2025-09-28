@@ -3,9 +3,13 @@ solver:
   dt: 0.04
   position_weight: [100.0, 100.0, 80.0]
   velocity_weight: [8.0, 8.0, 10.0]
-  control_weight: [1.8, 1.8, 2.4]
-  terminal_weight: [100.0, 100.0, 80.0, 20.0, 20.0, 10.0]
-  accel_limits: [6.0, 6.0, 6.0]
+  quaternion_weight: [200.0, 50.0, 50.0, 50.0]
+  rate_weight: [10.0, 10.0, 10.0]
+  control_weight: [0.5, 0.5, 0.5, 0.5]
+  terminal_weight: [150.0, 150.0, 120.0,
+                    20.0, 20.0, 20.0,
+                    200.0, 200.0, 200.0, 200.0,
+                    10.0, 10.0, 10.0]
   regularization: 5.0e-03
   iter_max: 2
   codegen_directory: ~/.cache/rotors_mpc_controller/acados
@@ -23,16 +27,6 @@ vehicle:
 
 controller:
   thrust_limits: [4.0, 8.0]
-  attitude_gains:
-    roll:
-      kp: 4.0
-      kd: 1.2
-    pitch:
-      kp: 4.0
-      kd: 1.2
-    yaw:
-      kp: 1.5
-      kd: 0.35
 
 world:
   gravity: 9.81
@@ -46,13 +40,9 @@ reference:
 
 topics:
   state: /hummingbird/ground_truth/odometry
-  command: /mpc_controller/command_attitude
   motor: /hummingbird/command/motor_speed
   reference: /mpc_controller/setpoint
 
 node:
   rate: 60.0
-  max_tilt_deg: 18.0
-  yaw_rate_gain: 0.9
-  yaw_rate_limit: 1.2
   log_interval: 3.0

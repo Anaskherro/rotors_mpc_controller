@@ -20,6 +20,5 @@ catkin_package()
 
 catkin_install_python(PROGRAMS
   nodes/mpc_controller_node
-  nodes/low_level_controller_node
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )

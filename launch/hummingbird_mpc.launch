@@ -19,9 +19,4 @@
         type="mpc_controller_node"
         name="mpc_controller_node"
         output="screen" />
-
-  <node pkg="rotors_mpc_controller"
-        type="low_level_controller_node"
-        name="low_level_controller_node"
-        output="screen" />
 </launch>

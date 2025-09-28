@@ -2,17 +2,17 @@
 
 A ROS package that provides a nonlinear model predictive controller (NMPC) for quadrotor trajectory tracking in Gazebo. The controller uses [acados](https://github.com/acados/acados) for fast optimal control, and interfaces with the [RotorS simulator](https://github.com/ethz-asl/rotors_simulator) (included as a git submodule).
 
-The package targets ROS Noetic on Ubuntu 20.04 and has been tested against the RotorS "hummingbird" configuration. It publishes roll/pitch/yaw-rate/thrust commands that are converted to motor speeds via a lightweight PID mixer.
+The package targets ROS Noetic on Ubuntu 20.04 and has been tested against the RotorS "hummingbird" configuration. The NMPC now drives the four rotor thrusts directly, so no auxiliary mixer is required.
 
 ## Features
 
-- Translational NMPC solved with acados and CasADi.
-- Automatic conversion from desired world-frame acceleration to attitude and thrust via thrust-vector alignment.
+- Rotor-level NMPC solved with acados and CasADi using a 13-state quadrotor model.
+- Direct mapping from solver outputs to rotor speeds with saturation handling.
 - Warm-start caching with fail-safe reuse of the last valid command.
-- Periodic logging of the internal NMPC state, references, and final commands.
-- Configurable parameters via YAML for solver weights, limits, and low-level attitude gains.
+- Periodic logging of the internal NMPC state, references, and final thrust commands.
+- Configurable parameters via YAML for solver weights, vehicle properties, and thrust limits.
 - Live tuning through `dynamic_reconfigure` (`rqt_reconfigure`) with automatic acados solver regeneration whenever solver parameters change.
-- Gazebo launch integration that spawns the RotorS hummingbird with both the NMPC and low-level controller.
+- Gazebo launch integration that spawns the RotorS hummingbird and the NMPC node.
 
 ## Repository layout
 
@@ -24,7 +24,6 @@ rotors_mpc_controller/
 ├── nodes/                # ROS node entry points (Python)
 ├── src/rotors_mpc_controller/
 │   ├── controller.py     # acados-based NMPC core
-│   ├── low_level.py      # PID rotor mixer utilities
 │   ├── params.py         # Parameter loading & validation
 │   └── reference.py      # Reference management utilities
 ├── third_party/
@@ -71,7 +70,7 @@ This launch file will:
 
 1. Start Gazebo with the RotorS world.
 2. Spawn the hummingbird vehicle.
-3. Launch `mpc_controller_node` (NMPC) and `low_level_controller_node` (PID mixer).
+3. Launch `mpc_controller_node`, which now maps solver thrusts directly to motor speeds.
 
 You can command a new setpoint by publishing a `geometry_msgs/PoseStamped` to `/mpc_controller/setpoint`. Example:
 
@@ -84,12 +83,12 @@ pose: {position: {x: 2.0, y: 0.0, z: 1.5}, orientation: {w: 1.0}}" -1
 
 All runtime parameters live in [`config/params.yaml`](config/params.yaml). Key sections:
 
-- `solver`: NMPC horizon, discretization, quadratic weights, acceleration limits, damping.
+- `solver`: NMPC horizon, discretization, quadratic weights, and regularisation.
 - `vehicle`: mass, inertia, arm length, rotor constants, motor speed limits.
-- `controller`: thrust limits and attitude PID gains.
+- `controller`: rotor thrust limits.
 - `reference`: default hold position/velocity/yaw.
-- `topics`: ROS topic names for state, command, and motors.
-- `node`: execution rate, max tilt, yaw-rate controller gains, and logging interval.
+- `topics`: ROS topic names for state, motor speeds, and setpoint input.
+- `node`: execution rate and logging interval.
 
 Changes take effect immediately when adjusted through `rqt_reconfigure`. For YAML edits, the node rebuilds the solver during startup using the updated values.
 
@@ -108,9 +107,9 @@ Select the `rotors_mpc_controller` namespace and tweak the sliders. Solver-relat
 Every `node.log_interval` seconds (default 3 s) the MPC node prints:
 
 ```
-MPC log: status=<acados_status> pos=<current> vel=<current_vel>
-         ref_pos=<ref_position> ref_vel=<ref_velocity> ref_acc=<ref_acc>
-         acc_cmd=<solver_output> command=<roll pitch yaw_rate thrust>
+MPC log: status=<acados_status> pos=<current> vel=<current_vel> quat=<current_quat>
+         ref_pos=<ref_position> ref_vel=<ref_velocity> ref_quat=<ref_quaternion>
+         ref_thrust=<reference_thrust> cmd=<clipped_thrust>
 ```
 
 Use this to diagnose divergence, saturation, or solver failures. If acados returns a non-zero status, the node reuses the last valid command and logs the snapshot so you can inspect what happened.
