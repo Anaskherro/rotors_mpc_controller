@@ -35,6 +35,20 @@ class ReferenceGenerator:
             if yaw is not None:
                 self._yaw = float(yaw)
 
+    def update_defaults(self,
+                        position: np.ndarray,
+                        velocity: np.ndarray,
+                        acceleration: np.ndarray,
+                        yaw: float,
+                        frame: str | None = None) -> None:
+        with self._lock:
+            self._position = np.asarray(position, dtype=float).reshape(3)
+            self._velocity = np.asarray(velocity, dtype=float).reshape(3)
+            self._acceleration = np.asarray(acceleration, dtype=float).reshape(3)
+            self._yaw = float(yaw)
+            if frame is not None:
+                self.frame = frame
+
     def build_horizon(self, horizon: int, dt: float) -> Dict[str, np.ndarray]:
         with self._lock:
             pos = np.tile(self._position, (horizon + 1, 1))

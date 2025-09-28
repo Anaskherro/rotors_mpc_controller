@@ -7,9 +7,14 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   nav_msgs
   mav_msgs
+  dynamic_reconfigure
 )
 
 catkin_python_setup()
+
+generate_dynamic_reconfigure_options(
+  cfg/rotors_mpc.cfg
+)
 
 catkin_package()
 

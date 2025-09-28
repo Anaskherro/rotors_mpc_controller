@@ -4,30 +4,37 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 import numpy as np
 import rospy
+from dynamic_reconfigure.server import Server
 from mav_msgs.msg import Actuators, RollPitchYawrateThrust
 from nav_msgs.msg import Odometry
 
-from rotors_mpc_controller import RotorMixer, load_params, quaternion_to_euler
+from rotors_mpc_controller import (RotorMixer, apply_dynamic_configuration,
+                                   load_params, quaternion_to_euler)
+from rotors_mpc_controller.cfg import RotorsMPCConfig
 
 
 class LowLevelControllerNode:
     def __init__(self) -> None:
         self._params = load_params()
-        self._topics = self._params['topics']
+        self._topics = dict(self._params['topics'])
         self._mixer = RotorMixer(self._params)
+        self._lock = threading.Lock()
 
         self._command: Optional[dict] = None
         self._attitude: Optional[tuple] = None
         self._body_rates: Optional[np.ndarray] = None
 
         self._motor_pub = rospy.Publisher(self._topics['motor'], Actuators, queue_size=1)
-        rospy.Subscriber(self._topics['command'], RollPitchYawrateThrust,
-                         self._command_cb, queue_size=1)
-        rospy.Subscriber(self._topics['state'], Odometry, self._odom_cb, queue_size=1)
+        self._command_sub = rospy.Subscriber(self._topics['command'], RollPitchYawrateThrust,
+                                             self._command_cb, queue_size=1)
+        self._state_sub = rospy.Subscriber(self._topics['state'], Odometry,
+                                           self._odom_cb, queue_size=1)
+        self._reconfig_srv = Server(RotorsMPCConfig, self._reconfigure_cb)
 
     def _command_cb(self, msg: RollPitchYawrateThrust) -> None:
         self._command = {
@@ -52,19 +59,58 @@ class LowLevelControllerNode:
         if self._command is None or self._attitude is None or self._body_rates is None:
             return
 
-        rotor_speeds = self._mixer.compute_motor_speeds(
-            roll_cmd=self._command['roll'],
-            pitch_cmd=self._command['pitch'],
-            yaw_rate_cmd=self._command['yaw_rate'],
-            thrust_cmd=self._command['thrust'],
-            attitude=self._attitude,
-            body_rates=tuple(self._body_rates),
-        )
+        with self._lock:
+            rotor_speeds = self._mixer.compute_motor_speeds(
+                roll_cmd=self._command['roll'],
+                pitch_cmd=self._command['pitch'],
+                yaw_rate_cmd=self._command['yaw_rate'],
+                thrust_cmd=self._command['thrust'],
+                attitude=self._attitude,
+                body_rates=tuple(self._body_rates),
+            )
 
         msg = Actuators()
         msg.header.stamp = stamp if stamp != rospy.Time() else rospy.Time.now()
         msg.angular_velocities = rotor_speeds.tolist()
         self._motor_pub.publish(msg)
+
+    def _reconfigure_cb(self, config: RotorsMPCConfig, level: int) -> RotorsMPCConfig:
+        with self._lock:
+            topics_cfg, _, _ = apply_dynamic_configuration(self._params, config)
+            self._mixer = RotorMixer(self._params)
+
+            if topics_cfg != self._topics:
+                if hasattr(self, '_command_sub') and self._command_sub is not None:
+                    self._command_sub.unregister()
+                if hasattr(self, '_state_sub') and self._state_sub is not None:
+                    self._state_sub.unregister()
+                if self._motor_pub is not None:
+                    self._motor_pub.unregister()
+
+                self._topics = dict(topics_cfg)
+                self._motor_pub = rospy.Publisher(self._topics['motor'], Actuators, queue_size=1)
+                self._command_sub = rospy.Subscriber(self._topics['command'], RollPitchYawrateThrust,
+                                                     self._command_cb, queue_size=1)
+                self._state_sub = rospy.Subscriber(self._topics['state'], Odometry,
+                                                   self._odom_cb, queue_size=1)
+
+        config.controller_thrust_min = self._params['controller']['thrust_limits'][0]
+        config.controller_thrust_max = self._params['controller']['thrust_limits'][1]
+        attitude = self._params['controller']['attitude_gains']
+        config.controller_roll_kp = attitude['roll']['kp']
+        config.controller_roll_kd = attitude['roll']['kd']
+        config.controller_pitch_kp = attitude['pitch']['kp']
+        config.controller_pitch_kd = attitude['pitch']['kd']
+        config.controller_yaw_kp = attitude['yaw']['kp']
+        config.controller_yaw_kd = attitude['yaw']['kd']
+        config.controller_max_tilt_deg = self._params['controller']['max_tilt_deg']
+
+        config.topic_state = self._topics['state']
+        config.topic_command = self._topics['command']
+        config.topic_motor = self._topics['motor']
+        config.topic_reference = self._topics['reference']
+
+        return config
 
 
 def main() -> None:

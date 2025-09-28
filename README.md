@@ -11,12 +11,14 @@ The package targets ROS Noetic on Ubuntu 20.04 and has been tested against the R
 - Warm-start caching with fail-safe reuse of the last valid command.
 - Periodic logging of the internal NMPC state, references, and final commands.
 - Configurable parameters via YAML for solver weights, limits, and low-level attitude gains.
+- Live tuning through `dynamic_reconfigure` (`rqt_reconfigure`) with automatic acados solver regeneration whenever solver parameters change.
 - Gazebo launch integration that spawns the RotorS hummingbird with both the NMPC and low-level controller.
 
 ## Repository layout
 
 ```
 rotors_mpc_controller/
+├── cfg/                  # dynamic_reconfigure definitions
 ├── config/               # YAML configuration (solver, vehicle, topics)
 ├── launch/               # Example launch files
 ├── nodes/                # ROS node entry points (Python)
@@ -57,7 +59,7 @@ catkin build rotors_mpc_controller
 source devel/setup.bash
 ```
 
-> **Note**: The first time you run the NMPC node, acados will generate solver code in `~/.cache/rotors_mpc_controller/acados`. If you change the horizon length or discretization in the YAML, delete that directory so acados regenerates the solver with the new settings.
+> **Note**: The first time you run the NMPC node, acados will generate solver code in `~/.cache/rotors_mpc_controller/acados`. Subsequent parameter changes made via `rqt_reconfigure` or YAML edits automatically rebuild the solver; you no longer need to delete the cache manually.
 
 ## Running the simulator
 
@@ -89,7 +91,17 @@ All runtime parameters live in [`config/params.yaml`](config/params.yaml). Key s
 - `topics`: ROS topic names for state, command, and motors.
 - `node`: execution rate, max tilt, yaw-rate controller gains, and logging interval.
 
-Changes take effect on restart. When altering horizon or dt, delete `~/.cache/rotors_mpc_controller/acados` to force solver regeneration.
+Changes take effect immediately when adjusted through `rqt_reconfigure`. For YAML edits, the node rebuilds the solver during startup using the updated values.
+
+## Live tuning with dynamic reconfigure
+
+The controller exposes all solver, vehicle, controller, reference, and topic settings through ROS dynamic reconfigure. To adjust parameters on the fly:
+
+```bash
+rosrun rqt_reconfigure rqt_reconfigure
+```
+
+Select the `rotors_mpc_controller` namespace and tweak the sliders. Solver-related changes regenerate the acados model instantly, while other entries update the running controller without a restart.
 
 ## Logging and debugging
 
@@ -123,4 +135,3 @@ Distributed under the MIT License. See [LICENSE](LICENSE).
 ## Contributing
 
 Pull requests and issues are welcome. Please open an issue describing the change before submitting large feature PRs.
-

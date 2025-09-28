@@ -3,7 +3,7 @@
 from .controller import PositionNMPC, compute_attitude_from_accel
 from .low_level import RotorMixer, quaternion_to_euler
 from .reference import ReferenceGenerator
-from .params import load_params
+from .params import apply_dynamic_configuration, load_params
 
 __all__ = [
     'PositionNMPC',
@@ -11,5 +11,6 @@ __all__ = [
     'RotorMixer',
     'quaternion_to_euler',
     'ReferenceGenerator',
+    'apply_dynamic_configuration',
     'load_params',
 ]

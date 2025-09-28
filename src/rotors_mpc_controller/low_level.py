@@ -36,6 +36,8 @@ class RotorMixer:
         self.km = float(vehicle['rotor_moment_constant'])
         self.omega_min = float(vehicle.get('motor_min_speed', 0.0))
         self.omega_max = float(vehicle.get('motor_max_speed', 2000.0))
+        self.drag_coefficients = np.asarray(vehicle.get('drag_coefficients',
+                                                        [0.0, 0.0, 0.0]), dtype=float)
 
         gains = controller.get('attitude_gains', {})
         self.gains = AttitudeGains(

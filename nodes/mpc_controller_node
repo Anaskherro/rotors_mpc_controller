@@ -5,16 +5,21 @@
 from __future__ import annotations
 
 import math
+import threading
 from typing import Optional
 
 import numpy as np
 import rospy
+from dynamic_reconfigure.server import Server
 from geometry_msgs.msg import PoseStamped
 from mav_msgs.msg import RollPitchYawrateThrust
 from nav_msgs.msg import Odometry
 
 from rotors_mpc_controller import (PositionNMPC, ReferenceGenerator,
-                                   load_params, quaternion_to_euler)
+                                   apply_dynamic_configuration,
+                                   compute_attitude_from_accel, load_params,
+                                   quaternion_to_euler)
+from rotors_mpc_controller.cfg import RotorsMPCConfig
 
 
 class MPCControllerNode:
@@ -22,7 +27,7 @@ class MPCControllerNode:
         self._params = load_params()
         self._controller = PositionNMPC(self._params)
         self._reference = ReferenceGenerator(self._params['reference'])
-        self._topics = self._params['topics']
+        self._topics = dict(self._params['topics'])
         node_cfg = self._params.get('node', {})
         self._rate_hz = float(node_cfg.get('rate', 50.0))
         self._yaw_rate_gain = float(node_cfg.get('yaw_rate_gain', 1.0))
@@ -31,8 +36,11 @@ class MPCControllerNode:
         self._max_tilt = math.radians(max_tilt_deg)
         self._log_interval = float(node_cfg.get('log_interval', 3.0))
         self._last_log_time = rospy.Time.now()
+        self._mass = float(self._params['vehicle']['mass'])
+        self._gravity = float(self._params['world']['gravity'])
         thrust_limits = self._params['controller']['thrust_limits']
         self._thrust_limits = (float(thrust_limits[0]), float(thrust_limits[1]))
+        self._controller_lock = threading.Lock()
 
         self._state: Optional[dict] = None
         self._last_command = np.zeros(4, dtype=float)
@@ -40,11 +48,14 @@ class MPCControllerNode:
         self._command_pub = rospy.Publisher(self._topics['command'],
                                             RollPitchYawrateThrust,
                                             queue_size=1)
-        rospy.Subscriber(self._topics['state'], Odometry, self._odom_cb, queue_size=1)
-        rospy.Subscriber(self._topics.get('reference', '~setpoint'), PoseStamped,
-                         self._reference_cb, queue_size=1)
+        self._state_sub = rospy.Subscriber(self._topics['state'], Odometry,
+                                           self._odom_cb, queue_size=1)
+        self._reference_topic = self._topics.get('reference', '~setpoint')
+        self._reference_sub = rospy.Subscriber(self._reference_topic, PoseStamped,
+                                               self._reference_cb, queue_size=1)
 
         self._timer = rospy.Timer(rospy.Duration(1.0 / self._rate_hz), self._loop)
+        self._reconfig_srv = Server(RotorsMPCConfig, self._reconfigure_cb)
         rospy.loginfo('mpc_controller_node: ready (dt=%.3f, horizon=%d)',
                       self._controller.dt, self._controller.horizon)
 
@@ -87,24 +98,35 @@ class MPCControllerNode:
         reference = self._reference.build_horizon(self._controller.horizon,
                                                   self._controller.dt)
 
-        command_raw, status, info = self._controller.solve(self._state,
-                                                           reference)
+        with self._controller_lock:
+            acc_cmd, status = self._controller.solve(self._state['position'],
+                                                     self._state['velocity'],
+                                                     reference)
         if status != 0:
             rospy.logwarn_throttle(1.0, 'mpc_controller_node: solver returned status %d', status)
             if self._last_command is not None:
                 self._publish_command(self._last_command)
-                self._maybe_log(reference, info, status)
+                self._maybe_log(reference, acc_cmd, status)
             return
 
-        roll_cmd = float(np.clip(command_raw[0], -self._max_tilt, self._max_tilt))
-        pitch_cmd = float(np.clip(command_raw[1], -self._max_tilt, self._max_tilt))
-        yaw_rate_cmd = float(np.clip(command_raw[2], -self._yaw_rate_limit, self._yaw_rate_limit))
-        thrust_cmd = float(np.clip(command_raw[3], self._thrust_limits[0], self._thrust_limits[1]))
+        yaw_target = reference['yaws'][0]
+        roll_cmd, pitch_cmd, thrust_cmd = compute_attitude_from_accel(acc_cmd,
+                                                                      self._mass,
+                                                                      self._gravity,
+                                                                      self._thrust_limits,
+                                                                      yaw_target)
+        roll_cmd = float(np.clip(roll_cmd, -self._max_tilt, self._max_tilt))
+        pitch_cmd = float(np.clip(pitch_cmd, -self._max_tilt, self._max_tilt))
+        yaw_current = self._state['attitude'][2]
+        yaw_error = math.atan2(math.sin(yaw_target - yaw_current),
+                               math.cos(yaw_target - yaw_current))
+        yaw_rate_cmd = self._yaw_rate_gain * yaw_error
+        yaw_rate_cmd = float(np.clip(yaw_rate_cmd, -self._yaw_rate_limit, self._yaw_rate_limit))
 
         command = np.array([roll_cmd, pitch_cmd, yaw_rate_cmd, thrust_cmd], dtype=float)
         self._publish_command(command)
         self._last_command = command
-        self._maybe_log(reference, info, status)
+        self._maybe_log(reference, acc_cmd, status)
 
     @staticmethod
     def _yaw_from_quaternion(qx: float, qy: float, qz: float, qw: float) -> float:
@@ -135,7 +157,7 @@ class MPCControllerNode:
         msg.thrust.z = float(command[3])
         self._command_pub.publish(msg)
 
-    def _maybe_log(self, reference: dict, info: dict | None, status: int) -> None:
+    def _maybe_log(self, reference: dict, acc_cmd: np.ndarray, status: int) -> None:
         now = rospy.Time.now()
         if (now - self._last_log_time).to_sec() < self._log_interval:
             return
@@ -144,24 +166,154 @@ class MPCControllerNode:
         ref_pos = reference['positions'][0]
         ref_vel = reference['velocities'][0]
         ref_acc = reference['accelerations'][0]
-        control = info.get('control') if info else None
-        predicted_state = info.get('predicted_state') if info else None
-
-        residuals = info.get('residuals') if info else None
 
         rospy.loginfo(
-            'MPC log: status=%d pos=%s vel=%s ref_pos=%s ref_vel=%s ref_acc=%s control=%s command=%s pred_state=%s res=%s',
+            'MPC log: status=%d pos=%s vel=%s ref_pos=%s ref_vel=%s ref_acc=%s acc_cmd=%s command=%s',
             status,
             np.array2string(self._state['position'], precision=3),
             np.array2string(self._state['velocity'], precision=3),
             np.array2string(ref_pos, precision=3),
             np.array2string(ref_vel, precision=3),
             np.array2string(ref_acc, precision=3),
-            np.array2string(control if control is not None else np.zeros(self._controller.nu), precision=3),
+            np.array2string(acc_cmd, precision=3),
             np.array2string(self._last_command, precision=3),
-            np.array2string(predicted_state if predicted_state is not None else np.zeros(self._controller.nx), precision=3),
-            np.array2string(np.asarray(residuals) if residuals is not None else np.zeros(4), precision=3),
         )
+
+    def _reconfigure_cb(self, config: RotorsMPCConfig, level: int) -> RotorsMPCConfig:
+        with self._controller_lock:
+            topics_cfg, reference_defaults, node_meta = apply_dynamic_configuration(self._params, config)
+            controller_cfg = self._params['controller']
+            vehicle_cfg = self._params['vehicle']
+            world_cfg = self._params['world']
+
+            rospy.loginfo('mpc_controller_node: rebuilding ACADOS solver...')
+            new_controller = PositionNMPC(self._params)
+            self._controller = new_controller
+
+            regen_dt = new_controller.dt
+            regen_horizon = new_controller.horizon
+            regen_codegen = getattr(new_controller, 'codegen_path', 'n/a')
+            self._mass = float(vehicle_cfg['mass'])
+            self._gravity = float(world_cfg['gravity'])
+            self._thrust_limits = tuple(controller_cfg['thrust_limits'])
+            self._max_tilt = math.radians(node_meta['max_tilt_deg'])
+            self._yaw_rate_gain = node_meta['yaw_rate_gain']
+            self._yaw_rate_limit = node_meta['yaw_rate_limit']
+            self._log_interval = node_meta['log_interval']
+
+            self._reference.update_defaults(reference_defaults['position'],
+                                            reference_defaults['velocity'],
+                                            reference_defaults['acceleration'],
+                                            reference_defaults['yaw'],
+                                            frame=reference_defaults['frame'])
+
+            if topics_cfg != self._topics:
+                if self._state_sub is not None:
+                    self._state_sub.unregister()
+                if self._reference_sub is not None:
+                    self._reference_sub.unregister()
+                if self._command_pub is not None:
+                    self._command_pub.unregister()
+                self._topics = dict(topics_cfg)
+                self._command_pub = rospy.Publisher(self._topics['command'],
+                                                    RollPitchYawrateThrust,
+                                                    queue_size=1)
+                self._state_sub = rospy.Subscriber(self._topics['state'], Odometry,
+                                                   self._odom_cb, queue_size=1)
+                self._reference_topic = self._topics['reference']
+                self._reference_sub = rospy.Subscriber(self._reference_topic, PoseStamped,
+                                                       self._reference_cb, queue_size=1)
+
+            new_rate = node_meta['rate']
+            if new_rate > 0.0 and not math.isclose(new_rate, self._rate_hz):
+                self._rate_hz = new_rate
+                if hasattr(self, '_timer') and self._timer is not None:
+                    self._timer.shutdown()
+                self._timer = rospy.Timer(rospy.Duration(1.0 / self._rate_hz), self._loop)
+
+        rospy.loginfo('mpc_controller_node: regenerated ACADOS model (dt=%.3f, horizon=%d, codegen=%s)',
+                      regen_dt, regen_horizon, regen_codegen)
+
+        config.solver_horizon_steps = self._params['solver']['horizon_steps']
+        config.solver_dt = self._params['solver']['dt']
+        config.solver_position_weight_x = self._params['solver']['position_weight'][0]
+        config.solver_position_weight_y = self._params['solver']['position_weight'][1]
+        config.solver_position_weight_z = self._params['solver']['position_weight'][2]
+        config.solver_velocity_weight_x = self._params['solver']['velocity_weight'][0]
+        config.solver_velocity_weight_y = self._params['solver']['velocity_weight'][1]
+        config.solver_velocity_weight_z = self._params['solver']['velocity_weight'][2]
+        config.solver_control_weight_x = self._params['solver']['control_weight'][0]
+        config.solver_control_weight_y = self._params['solver']['control_weight'][1]
+        config.solver_control_weight_z = self._params['solver']['control_weight'][2]
+        config.solver_terminal_weight_px = self._params['solver']['terminal_weight'][0]
+        config.solver_terminal_weight_py = self._params['solver']['terminal_weight'][1]
+        config.solver_terminal_weight_pz = self._params['solver']['terminal_weight'][2]
+        config.solver_terminal_weight_vx = self._params['solver']['terminal_weight'][3]
+        config.solver_terminal_weight_vy = self._params['solver']['terminal_weight'][4]
+        config.solver_terminal_weight_vz = self._params['solver']['terminal_weight'][5]
+        config.solver_accel_limit_x = self._params['solver']['accel_limits'][0]
+        config.solver_accel_limit_y = self._params['solver']['accel_limits'][1]
+        config.solver_accel_limit_z = self._params['solver']['accel_limits'][2]
+        config.solver_regularization = self._params['solver']['regularization']
+        config.solver_codegen_directory = self._params['solver'].get('codegen_directory', '')
+
+        config.vehicle_mass = self._params['vehicle']['mass']
+        inertia = self._params['vehicle']['inertia']
+        config.vehicle_inertia_xx = inertia[0]
+        config.vehicle_inertia_xy = inertia[1]
+        config.vehicle_inertia_xz = inertia[2]
+        config.vehicle_inertia_yx = inertia[3]
+        config.vehicle_inertia_yy = inertia[4]
+        config.vehicle_inertia_yz = inertia[5]
+        config.vehicle_inertia_zx = inertia[6]
+        config.vehicle_inertia_zy = inertia[7]
+        config.vehicle_inertia_zz = inertia[8]
+        config.vehicle_arm_length = self._params['vehicle']['arm_length']
+        config.vehicle_rotor_force_constant = self._params['vehicle']['rotor_force_constant']
+        config.vehicle_rotor_moment_constant = self._params['vehicle']['rotor_moment_constant']
+        config.vehicle_motor_min_speed = self._params['vehicle']['motor_min_speed']
+        config.vehicle_motor_max_speed = self._params['vehicle']['motor_max_speed']
+        drag = self._params['vehicle']['drag_coefficients']
+        config.vehicle_drag_x = drag[0]
+        config.vehicle_drag_y = drag[1]
+        config.vehicle_drag_z = drag[2]
+
+        config.controller_thrust_min = self._params['controller']['thrust_limits'][0]
+        config.controller_thrust_max = self._params['controller']['thrust_limits'][1]
+        config.controller_roll_kp = self._params['controller']['attitude_gains']['roll']['kp']
+        config.controller_roll_kd = self._params['controller']['attitude_gains']['roll']['kd']
+        config.controller_pitch_kp = self._params['controller']['attitude_gains']['pitch']['kp']
+        config.controller_pitch_kd = self._params['controller']['attitude_gains']['pitch']['kd']
+        config.controller_yaw_kp = self._params['controller']['attitude_gains']['yaw']['kp']
+        config.controller_yaw_kd = self._params['controller']['attitude_gains']['yaw']['kd']
+        config.controller_max_tilt_deg = self._params['controller']['max_tilt_deg']
+
+        config.world_gravity = self._params['world']['gravity']
+
+        config.reference_frame = self._params['reference']['frame']
+        config.reference_position_x = self._params['reference']['default_position'][0]
+        config.reference_position_y = self._params['reference']['default_position'][1]
+        config.reference_position_z = self._params['reference']['default_position'][2]
+        config.reference_velocity_x = self._params['reference']['default_velocity'][0]
+        config.reference_velocity_y = self._params['reference']['default_velocity'][1]
+        config.reference_velocity_z = self._params['reference']['default_velocity'][2]
+        config.reference_acceleration_x = self._params['reference']['default_acceleration'][0]
+        config.reference_acceleration_y = self._params['reference']['default_acceleration'][1]
+        config.reference_acceleration_z = self._params['reference']['default_acceleration'][2]
+        config.reference_yaw = self._params['reference']['default_yaw']
+
+        config.topic_state = self._topics['state']
+        config.topic_command = self._topics['command']
+        config.topic_motor = self._topics['motor']
+        config.topic_reference = self._topics['reference']
+
+        config.node_rate = self._rate_hz
+        config.node_max_tilt_deg = math.degrees(self._max_tilt)
+        config.node_yaw_rate_gain = self._yaw_rate_gain
+        config.node_yaw_rate_limit = self._yaw_rate_limit
+        config.node_log_interval = self._log_interval
+
+        return config
 
 
 def main() -> None:
