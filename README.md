@@ -90,6 +90,13 @@ All runtime parameters live in [`config/params.yaml`](config/params.yaml). Key s
 - `topics`: ROS topic names for state, motor speeds, and setpoint input.
 - `node`: execution rate and logging interval.
 
+Shipped defaults (also pre-populated in `rqt_reconfigure`) now match the tuned rotor-level setup:
+
+- `horizon_steps = 20`, `dt = 0.07 s`, `iter_max = 20`, `regularization = 7.5e-4`.
+- Symmetric position weights `[10, 10, 5]`, velocity weights `[1, 1, 1]`, quaternion weights `[1.8 × 4]`, rate weights `[2, 2, 0.22]`.
+- Control penalty `0.5` per rotor and terminal weights `[5, 5, 5, 2, 2, 2, 7.8 × 4, 2 × 3]`.
+- Thrust window widened to `[4, 20]` N per motor; default reference holds position at `(1, 1, 1)` with zero velocities.
+
 Changes take effect immediately when adjusted through `rqt_reconfigure`. For YAML edits, the node rebuilds the solver during startup using the updated values.
 
 ## Live tuning with dynamic reconfigure
@@ -100,7 +107,7 @@ The controller exposes all solver, vehicle, controller, reference, and topic set
 rosrun rqt_reconfigure rqt_reconfigure
 ```
 
-Select the `rotors_mpc_controller` namespace and tweak the sliders. Solver-related changes regenerate the acados model instantly, while other entries update the running controller without a restart.
+Select the `rotors_mpc_controller` namespace and tweak the sliders. Solver-related changes regenerate the acados model instantly, while other entries update the running controller without a restart. The `solver_horizon_steps` and `solver_iter_max` sliders now span up to 600 to simplify large-horizon experiments.
 
 ## Logging and debugging
 

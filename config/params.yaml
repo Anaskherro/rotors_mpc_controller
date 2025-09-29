@@ -1,17 +1,17 @@
 solver:
-  horizon_steps: 30
-  dt: 0.04
-  position_weight: [100.0, 100.0, 80.0]
-  velocity_weight: [8.0, 8.0, 10.0]
-  quaternion_weight: [200.0, 50.0, 50.0, 50.0]
-  rate_weight: [10.0, 10.0, 10.0]
+  horizon_steps: 20
+  dt: 0.07
+  position_weight: [10.0, 10.0, 5.0]
+  velocity_weight: [1.0, 1.0, 1.0]
+  quaternion_weight: [1.8, 1.8, 1.8, 1.8]
+  rate_weight: [2.0, 2.0, 0.22]
   control_weight: [0.5, 0.5, 0.5, 0.5]
-  terminal_weight: [150.0, 150.0, 120.0,
-                    20.0, 20.0, 20.0,
-                    200.0, 200.0, 200.0, 200.0,
-                    10.0, 10.0, 10.0]
-  regularization: 5.0e-03
-  iter_max: 2
+  terminal_weight: [5.0, 5.0, 5.0,
+                    2.0, 2.0, 2.0,
+                    7.8, 7.8, 7.8, 7.8,
+                    2.0, 2.0, 2.0]
+  regularization: 7.5e-04
+  iter_max: 20
   codegen_directory: ~/.cache/rotors_mpc_controller/acados
 
 vehicle:
@@ -24,16 +24,17 @@ vehicle:
   rotor_moment_constant: 0.016
   motor_min_speed: 50.0
   motor_max_speed: 838.0
+  rotor_configuration: '+'
 
 controller:
-  thrust_limits: [4.0, 8.0]
+  thrust_limits: [4.0, 20.0]
 
 world:
   gravity: 9.81
 
 reference:
   frame: world
-  default_position: [0.0, 0.0, 1.0]
+  default_position: [1.0, 1.0, 1.0]
   default_velocity: [0.0, 0.0, 0.0]
   default_acceleration: [0.0, 0.0, 0.0]
   default_yaw: 0.0

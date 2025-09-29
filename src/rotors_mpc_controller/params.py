@@ -68,22 +68,22 @@ def _recursive_update(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[s
 
 
 def _coerce_solver(cfg: Dict[str, Any]) -> None:
-    cfg['horizon_steps'] = int(cfg['horizon_steps'])
-    cfg['dt'] = float(cfg['dt'])
-    cfg['position_weight'] = [float(v) for v in cfg.get('position_weight', [10.0, 10.0, 10.0])]
-    cfg['velocity_weight'] = [float(v) for v in cfg.get('velocity_weight', [2.0, 2.0, 2.0])]
+    cfg['horizon_steps'] = int(cfg.get('horizon_steps', 20))
+    cfg['dt'] = float(cfg.get('dt', 0.07))
+    cfg['position_weight'] = [float(v) for v in cfg.get('position_weight', [10.0, 10.0, 5.0])]
+    cfg['velocity_weight'] = [float(v) for v in cfg.get('velocity_weight', [1.0, 1.0, 1.0])]
     cfg['quaternion_weight'] = [float(v) for v in cfg.get('quaternion_weight',
-                                                         [50.0, 50.0, 50.0, 50.0])]
-    cfg['rate_weight'] = [float(v) for v in cfg.get('rate_weight', [1.0, 1.0, 1.0])]
+                                                         [1.8, 1.8, 1.8, 1.8])]
+    cfg['rate_weight'] = [float(v) for v in cfg.get('rate_weight', [2.0, 2.0, 0.22])]
     cfg['control_weight'] = [float(v) for v in cfg.get('control_weight',
                                                        [0.5, 0.5, 0.5, 0.5])]
     cfg['terminal_weight'] = [float(v) for v in cfg.get('terminal_weight',
-                                                       [20.0, 20.0, 20.0,
-                                                        10.0, 10.0, 10.0,
-                                                        50.0, 50.0, 50.0, 50.0,
-                                                        5.0, 5.0, 5.0])]
-    cfg['regularization'] = float(cfg.get('regularization', 1e-6))
-    cfg['iter_max'] = int(cfg.get('iter_max', 2))
+                                                       [5.0, 5.0, 5.0,
+                                                        2.0, 2.0, 2.0,
+                                                        7.8, 7.8, 7.8, 7.8,
+                                                        2.0, 2.0, 2.0])]
+    cfg['regularization'] = float(cfg.get('regularization', 7.5e-4))
+    cfg['iter_max'] = int(cfg.get('iter_max', 20))
     if 'codegen_directory' in cfg:
         cfg['codegen_directory'] = str(Path(cfg['codegen_directory']).expanduser())
 
@@ -103,10 +103,11 @@ def _coerce_vehicle(cfg: Dict[str, Any]) -> None:
     if len(drag) != 3:
         raise ValueError('vehicle.drag_coefficients must contain 3 values.')
     cfg['drag_coefficients'] = [float(v) for v in drag]
+    cfg['rotor_configuration'] = str(cfg.get('rotor_configuration', '+')).strip()
 
 
 def _coerce_controller(cfg: Dict[str, Any]) -> None:
-    thrust_limits = cfg.get('thrust_limits', [2.0, 25.0])
+    thrust_limits = cfg.get('thrust_limits', [4.0, 20.0])
     if len(thrust_limits) != 2:
         raise ValueError('controller.thrust_limits must contain [min, max].')
     cfg['thrust_limits'] = [float(thrust_limits[0]), float(thrust_limits[1])]
@@ -128,7 +129,7 @@ def _ensure_required(cfg: Dict[str, Any]) -> None:
 
 def _coerce_reference(cfg: Dict[str, Any]) -> None:
     cfg['frame'] = cfg.get('frame', 'world')
-    cfg['default_position'] = [float(v) for v in cfg.get('default_position', [0.0, 0.0, 1.0])]
+    cfg['default_position'] = [float(v) for v in cfg.get('default_position', [1.0, 1.0, 1.0])]
     cfg['default_velocity'] = [float(v) for v in cfg.get('default_velocity', [0.0, 0.0, 0.0])]
     cfg['default_acceleration'] = [float(v) for v in cfg.get('default_acceleration', [0.0, 0.0, 0.0])]
     cfg['default_yaw'] = float(cfg.get('default_yaw', 0.0))

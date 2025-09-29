@@ -89,21 +89,18 @@ class PositionNMPC:
         motor_max_speed = float(vehicle_cfg.get('motor_max_speed', 2000.0))
 
         configuration = params.get('vehicle', {}).get('rotor_configuration', '+')
+        configuration = str(configuration).strip()
         if configuration != '+':
-            configuration = '+'  # enforce '+' layout for rotor-level NMPC
+            raise ValueError(
+                f'rotors_mpc_controller only supports a "+" rotor lay-out, got "{configuration}".'
+            )
 
-        if configuration == '+':
-            rotor_x_offsets = np.array([arm_length, 0.0, -arm_length, 0.0], dtype=float)
-            rotor_y_offsets = np.array([0.0, arm_length, 0.0, -arm_length], dtype=float)
-        else:
-            h = float(np.cos(np.pi / 4.0) * arm_length)
-            rotor_x_offsets = np.array([h, -h, -h, h], dtype=float)
-            rotor_y_offsets = np.array([-h, -h, h, h], dtype=float)
-
-        rotor_z_torque = np.array([-rotor_moment_constant,
-                                    rotor_moment_constant,
-                                    -rotor_moment_constant,
-                                    rotor_moment_constant], dtype=float)
+        # Motor indexing matches the hummingbird Gazebo model: 0 front (CW), 1 left (CCW),
+        # 2 back (CW), 3 right (CCW). This orientation keeps the allocation matrix consistent.
+        rotor_x_offsets = np.array([arm_length, 0.0, -arm_length, 0.0], dtype=float)
+        rotor_y_offsets = np.array([0.0, arm_length, 0.0, -arm_length], dtype=float)
+        spin_directions = np.array([-1.0, 1.0, -1.0, 1.0], dtype=float)
+        rotor_z_torque = spin_directions * rotor_moment_constant
 
         thrust_min = max(0.0, rotor_force_constant * motor_min_speed ** 2)
         thrust_max = rotor_force_constant * motor_max_speed ** 2
@@ -123,23 +120,24 @@ class PositionNMPC:
         self.config = ControllerParams(
             horizon_steps=int(solver_cfg['horizon_steps']),
             dt=float(solver_cfg['dt']),
-            position_weight=np.asarray(solver_cfg.get('position_weight', [10.0, 10.0, 10.0]),
+            position_weight=np.asarray(solver_cfg.get('position_weight', [10.0, 10.0, 5.0]),
                                        dtype=float),
-            velocity_weight=np.asarray(solver_cfg.get('velocity_weight', [2.0, 2.0, 2.0]),
+            velocity_weight=np.asarray(solver_cfg.get('velocity_weight', [1.0, 1.0, 1.0]),
                                        dtype=float),
-            quaternion_weight=np.asarray(solver_cfg.get('quaternion_weight', [50.0, 50.0, 50.0, 50.0]),
+            quaternion_weight=np.asarray(solver_cfg.get('quaternion_weight',
+                                                         [1.8, 1.8, 1.8, 1.8]),
                                          dtype=float),
-            rate_weight=np.asarray(solver_cfg.get('rate_weight', [1.0, 1.0, 1.0]), dtype=float),
+            rate_weight=np.asarray(solver_cfg.get('rate_weight', [2.0, 2.0, 0.22]), dtype=float),
             control_weight=np.asarray(solver_cfg.get('control_weight', [0.5, 0.5, 0.5, 0.5]),
                                       dtype=float),
             terminal_weight=np.asarray(solver_cfg.get('terminal_weight',
-                                                       [20.0, 20.0, 20.0,
-                                                        10.0, 10.0, 10.0,
-                                                        50.0, 50.0, 50.0, 50.0,
-                                                        5.0, 5.0, 5.0]),
+                                                       [5.0, 5.0, 5.0,
+                                                        2.0, 2.0, 2.0,
+                                                        7.8, 7.8, 7.8, 7.8,
+                                                        2.0, 2.0, 2.0]),
                                        dtype=float),
-            regularization=float(solver_cfg.get('regularization', 1e-6)),
-            solver_iter_max=int(solver_cfg.get('iter_max', 2)),
+            regularization=float(solver_cfg.get('regularization', 7.5e-4)),
+            solver_iter_max=int(solver_cfg.get('iter_max', 20)),
             codegen_directory=codegen_dir,
             mass=self.mass,
             inertia=inertia_diag,
