@@ -69,21 +69,21 @@ def _recursive_update(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[s
 
 def _coerce_solver(cfg: Dict[str, Any]) -> None:
     cfg['horizon_steps'] = int(cfg.get('horizon_steps', 20))
-    cfg['dt'] = float(cfg.get('dt', 0.07))
-    cfg['position_weight'] = [float(v) for v in cfg.get('position_weight', [10.0, 10.0, 5.0])]
-    cfg['velocity_weight'] = [float(v) for v in cfg.get('velocity_weight', [1.0, 1.0, 1.0])]
+    cfg['dt'] = float(cfg.get('dt', 0.05))
+    cfg['position_weight'] = [float(v) for v in cfg.get('position_weight', [10.0, 10.0, 8.0])]
+    cfg['velocity_weight'] = [float(v) for v in cfg.get('velocity_weight', [1.0, 1.0, 0.2])]
     cfg['quaternion_weight'] = [float(v) for v in cfg.get('quaternion_weight',
-                                                         [1.8, 1.8, 1.8, 1.8])]
-    cfg['rate_weight'] = [float(v) for v in cfg.get('rate_weight', [2.0, 2.0, 0.22])]
+                                                         [3.2, 3.2, 3.2, 3.2])]
+    cfg['rate_weight'] = [float(v) for v in cfg.get('rate_weight', [1.4, 1.4, 0.4])]
     cfg['control_weight'] = [float(v) for v in cfg.get('control_weight',
-                                                       [0.5, 0.5, 0.5, 0.5])]
+                                                       [1.75, 1.75, 1.75, 1.75])]
     cfg['terminal_weight'] = [float(v) for v in cfg.get('terminal_weight',
-                                                       [5.0, 5.0, 5.0,
+                                                       [5.0, 5.0, 3.0,
                                                         2.0, 2.0, 2.0,
-                                                        7.8, 7.8, 7.8, 7.8,
-                                                        2.0, 2.0, 2.0])]
-    cfg['regularization'] = float(cfg.get('regularization', 7.5e-4))
-    cfg['iter_max'] = int(cfg.get('iter_max', 20))
+                                                        12.0, 12.0, 12.0, 10.5,
+                                                        2.0, 2.0, 1.8])]
+    cfg['regularization'] = float(cfg.get('regularization', 7.0e-3))
+    cfg['iter_max'] = int(cfg.get('iter_max', 600))
     if 'codegen_directory' in cfg:
         cfg['codegen_directory'] = str(Path(cfg['codegen_directory']).expanduser())
 

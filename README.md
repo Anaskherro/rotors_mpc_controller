@@ -92,10 +92,10 @@ All runtime parameters live in [`config/params.yaml`](config/params.yaml). Key s
 
 Shipped defaults (also pre-populated in `rqt_reconfigure`) now match the tuned rotor-level setup:
 
-- `horizon_steps = 20`, `dt = 0.07 s`, `iter_max = 20`, `regularization = 7.5e-4`.
-- Symmetric position weights `[10, 10, 5]`, velocity weights `[1, 1, 1]`, quaternion weights `[1.8 × 4]`, rate weights `[2, 2, 0.22]`.
-- Control penalty `0.5` per rotor and terminal weights `[5, 5, 5, 2, 2, 2, 7.8 × 4, 2 × 3]`.
-- Thrust window widened to `[4, 20]` N per motor; default reference holds position at `(1, 1, 1)` with zero velocities.
+- `horizon_steps = 20`, `dt = 0.05 s`, `iter_max = 600`, `regularization = 7e-3`.
+- Position weights `[10, 10, 8]`, velocity weights `[1, 1, 0.2]`, quaternion weights `[3.2 × 4]`, rate weights `[1.4, 1.4, 0.4]`.
+- Control penalty `1.75` per rotor and terminal weights `[5, 5, 3, 2, 2, 2, 12, 12, 12, 10.5, 2, 2, 1.8]`.
+- Thrust window `[4, 20]` N per motor; the default reference holds the vehicle at `(0, 0, 1)` with zero velocity.
 
 Changes take effect immediately when adjusted through `rqt_reconfigure`. For YAML edits, the node rebuilds the solver during startup using the updated values.
 

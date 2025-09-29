@@ -20,7 +20,7 @@ class ReferenceGenerator:
         self.frame = config.get('frame', 'world')
         self._lock = threading.Lock()
 
-        self._position = np.asarray(config.get('default_position', [1.0, 1.0, 1.0]), dtype=float)
+        self._position = np.asarray(config.get('default_position', [0.0, 0.0, 1.0]), dtype=float)
         self._velocity = np.asarray(config.get('default_velocity', [0.0, 0.0, 0.0]), dtype=float)
         self._yaw = float(config.get('default_yaw', 0.0))
         self._quaternion = _quat_from_yaw(self._yaw)
