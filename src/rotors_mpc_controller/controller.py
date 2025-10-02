@@ -133,7 +133,7 @@ class PositionNMPC:
             terminal_weight=np.asarray(solver_cfg.get('terminal_weight',
                                                        [5.0, 5.0, 3.0,
                                                         2.0, 2.0, 2.0,
-                                                        12.0, 12.0, 12.0, 10.5,
+                                                        12.0, 12.0, 12.0, 18.5,
                                                         2.0, 2.0, 1.8]),
                                        dtype=float),
             regularization=float(solver_cfg.get('regularization', 7.0e-3)),

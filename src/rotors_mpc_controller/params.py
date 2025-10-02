@@ -80,7 +80,7 @@ def _coerce_solver(cfg: Dict[str, Any]) -> None:
     cfg['terminal_weight'] = [float(v) for v in cfg.get('terminal_weight',
                                                        [5.0, 5.0, 3.0,
                                                         2.0, 2.0, 2.0,
-                                                        12.0, 12.0, 12.0, 10.5,
+                                                        12.0, 12.0, 12.0, 18.5,
                                                         2.0, 2.0, 1.8])]
     cfg['regularization'] = float(cfg.get('regularization', 7.0e-3))
     cfg['iter_max'] = int(cfg.get('iter_max', 600))

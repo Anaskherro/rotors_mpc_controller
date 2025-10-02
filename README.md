@@ -94,7 +94,7 @@ Shipped defaults (also pre-populated in `rqt_reconfigure`) now match the tuned r
 
 - `horizon_steps = 20`, `dt = 0.05 s`, `iter_max = 600`, `regularization = 7e-3`.
 - Position weights `[10, 10, 8]`, velocity weights `[1, 1, 0.2]`, quaternion weights `[3.2 × 4]`, rate weights `[1.4, 1.4, 0.4]`.
-- Control penalty `1.75` per rotor and terminal weights `[5, 5, 3, 2, 2, 2, 12, 12, 12, 10.5, 2, 2, 1.8]`.
+- Control penalty `1.75` per rotor and terminal weights `[5, 5, 3, 2, 2, 2, 12, 12, 12, 18.5, 2, 2, 1.8]`.
 - Thrust window `[4, 20]` N per motor; the default reference holds the vehicle at `(0, 0, 1)` with zero velocity.
 
 Changes take effect immediately when adjusted through `rqt_reconfigure`. For YAML edits, the node rebuilds the solver during startup using the updated values.
