@@ -68,16 +68,22 @@ def _recursive_update(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[s
 
 
 def _coerce_solver(cfg: Dict[str, Any]) -> None:
-    cfg['horizon_steps'] = int(cfg['horizon_steps'])
-    cfg['dt'] = float(cfg['dt'])
-    cfg['position_weight'] = [float(v) for v in cfg.get('position_weight', [10.0, 10.0, 10.0])]
-    cfg['velocity_weight'] = [float(v) for v in cfg.get('velocity_weight', [2.0, 2.0, 2.0])]
-    cfg['control_weight'] = [float(v) for v in cfg.get('control_weight', [0.5, 0.5, 0.5])]
+    cfg['horizon_steps'] = int(cfg.get('horizon_steps', 20))
+    cfg['dt'] = float(cfg.get('dt', 0.05))
+    cfg['position_weight'] = [float(v) for v in cfg.get('position_weight', [10.0, 10.0, 8.0])]
+    cfg['velocity_weight'] = [float(v) for v in cfg.get('velocity_weight', [1.0, 1.0, 0.2])]
+    cfg['quaternion_weight'] = [float(v) for v in cfg.get('quaternion_weight',
+                                                         [3.2, 3.2, 3.2, 3.2])]
+    cfg['rate_weight'] = [float(v) for v in cfg.get('rate_weight', [1.4, 1.4, 0.4])]
+    cfg['control_weight'] = [float(v) for v in cfg.get('control_weight',
+                                                       [1.75, 1.75, 1.75, 1.75])]
     cfg['terminal_weight'] = [float(v) for v in cfg.get('terminal_weight',
-                                                       [20.0, 20.0, 30.0, 5.0, 5.0, 7.0])]
-    cfg['accel_limits'] = [float(v) for v in cfg.get('accel_limits', [6.0, 6.0, 6.0])]
-    cfg['regularization'] = float(cfg.get('regularization', 1e-6))
-    cfg['iter_max'] = int(cfg.get('iter_max', 2))
+                                                       [5.0, 5.0, 3.0,
+                                                        2.0, 2.0, 2.0,
+                                                        12.0, 12.0, 12.0, 18.5,
+                                                        2.0, 2.0, 1.8])]
+    cfg['regularization'] = float(cfg.get('regularization', 7.0e-3))
+    cfg['iter_max'] = int(cfg.get('iter_max', 600))
     if 'codegen_directory' in cfg:
         cfg['codegen_directory'] = str(Path(cfg['codegen_directory']).expanduser())
 
@@ -97,33 +103,17 @@ def _coerce_vehicle(cfg: Dict[str, Any]) -> None:
     if len(drag) != 3:
         raise ValueError('vehicle.drag_coefficients must contain 3 values.')
     cfg['drag_coefficients'] = [float(v) for v in drag]
+    cfg['rotor_configuration'] = str(cfg.get('rotor_configuration', '+')).strip()
 
 
 def _coerce_controller(cfg: Dict[str, Any]) -> None:
-    thrust_limits = cfg.get('thrust_limits', [2.0, 25.0])
+    thrust_limits = cfg.get('thrust_limits', [4.0, 20.0])
     if len(thrust_limits) != 2:
         raise ValueError('controller.thrust_limits must contain [min, max].')
     cfg['thrust_limits'] = [float(thrust_limits[0]), float(thrust_limits[1])]
-
-    gains = cfg.get('attitude_gains', {})
-    for axis in ('roll', 'pitch', 'yaw'):
-        gains.setdefault(axis, {})
-        axis_cfg = gains[axis]
-        axis_cfg['kp'] = float(axis_cfg.get('kp', 8.0 if axis != 'yaw' else 1.0))
-        axis_cfg['kd'] = float(axis_cfg.get('kd', 2.0 if axis != 'yaw' else 0.2))
-    cfg['attitude_gains'] = gains
-
-    # Accept legacy "max_tilt_angle" key while ensuring canonical entry exists.
-    if 'max_tilt_deg' in cfg:
-        tilt_deg = cfg['max_tilt_deg']
-    elif 'max_tilt_angle' in cfg:
-        tilt_deg = cfg['max_tilt_angle']
-    else:
-        tilt_deg = 25.0
-    cfg['max_tilt_deg'] = float(tilt_deg)
-    # Preserve legacy key for downstream consumers expecting the old name.
-    if 'max_tilt_angle' in cfg:
-        cfg['max_tilt_angle'] = float(tilt_deg)
+    cfg.pop('attitude_gains', None)
+    cfg.pop('max_tilt_deg', None)
+    cfg.pop('max_tilt_angle', None)
 
 
 def _coerce_world(cfg: Dict[str, Any]) -> None:
@@ -139,14 +129,14 @@ def _ensure_required(cfg: Dict[str, Any]) -> None:
 
 def _coerce_reference(cfg: Dict[str, Any]) -> None:
     cfg['frame'] = cfg.get('frame', 'world')
-    cfg['default_position'] = [float(v) for v in cfg.get('default_position', [0.0, 0.0, 1.0])]
+    cfg['default_position'] = [float(v) for v in cfg.get('default_position', [1.0, 1.0, 1.0])]
     cfg['default_velocity'] = [float(v) for v in cfg.get('default_velocity', [0.0, 0.0, 0.0])]
     cfg['default_acceleration'] = [float(v) for v in cfg.get('default_acceleration', [0.0, 0.0, 0.0])]
     cfg['default_yaw'] = float(cfg.get('default_yaw', 0.0))
 
 
 def _coerce_topics(cfg: Dict[str, Any]) -> None:
-    for key in ('state', 'command', 'motor', 'reference'):
+    for key in ('state', 'motor', 'reference'):
         if key not in cfg:
             raise ValueError(f"Missing topic configuration '{key}'")
         cfg[key] = str(cfg[key])
@@ -154,10 +144,10 @@ def _coerce_topics(cfg: Dict[str, Any]) -> None:
 
 def _coerce_node(cfg: Dict[str, Any]) -> None:
     cfg['rate'] = float(cfg.get('rate', 50.0))
-    cfg['max_tilt_deg'] = float(cfg.get('max_tilt_deg', 25.0))
-    cfg['yaw_rate_gain'] = float(cfg.get('yaw_rate_gain', 1.0))
-    cfg['yaw_rate_limit'] = float(cfg.get('yaw_rate_limit', 1.5))
     cfg['log_interval'] = float(cfg.get('log_interval', 3.0))
+    cfg.pop('max_tilt_deg', None)
+    cfg.pop('yaw_rate_gain', None)
+    cfg.pop('yaw_rate_limit', None)
 
 
 def load_params() -> Dict[str, Any]:
@@ -205,18 +195,38 @@ def apply_dynamic_configuration(params: Dict[str, Any], config: Any) -> Tuple[Di
     solver_cfg['velocity_weight'] = [float(config.solver_velocity_weight_x),
                                      float(config.solver_velocity_weight_y),
                                      float(config.solver_velocity_weight_z)]
-    solver_cfg['control_weight'] = [float(config.solver_control_weight_x),
-                                    float(config.solver_control_weight_y),
-                                    float(config.solver_control_weight_z)]
-    solver_cfg['terminal_weight'] = [float(config.solver_terminal_weight_px),
-                                     float(config.solver_terminal_weight_py),
-                                     float(config.solver_terminal_weight_pz),
-                                     float(config.solver_terminal_weight_vx),
-                                     float(config.solver_terminal_weight_vy),
-                                     float(config.solver_terminal_weight_vz)]
-    solver_cfg['accel_limits'] = [float(config.solver_accel_limit_x),
-                                  float(config.solver_accel_limit_y),
-                                  float(config.solver_accel_limit_z)]
+    solver_cfg['quaternion_weight'] = [
+        float(getattr(config, 'solver_quat_weight_w', solver_cfg['quaternion_weight'][0])),
+        float(getattr(config, 'solver_quat_weight_x', solver_cfg['quaternion_weight'][1])),
+        float(getattr(config, 'solver_quat_weight_y', solver_cfg['quaternion_weight'][2])),
+        float(getattr(config, 'solver_quat_weight_z', solver_cfg['quaternion_weight'][3])),
+    ]
+    solver_cfg['rate_weight'] = [
+        float(getattr(config, 'solver_rate_weight_x', solver_cfg['rate_weight'][0])),
+        float(getattr(config, 'solver_rate_weight_y', solver_cfg['rate_weight'][1])),
+        float(getattr(config, 'solver_rate_weight_z', solver_cfg['rate_weight'][2])),
+    ]
+    solver_cfg['control_weight'] = [
+        float(getattr(config, 'solver_control_weight_f1', solver_cfg['control_weight'][0])),
+        float(getattr(config, 'solver_control_weight_f2', solver_cfg['control_weight'][1])),
+        float(getattr(config, 'solver_control_weight_f3', solver_cfg['control_weight'][2])),
+        float(getattr(config, 'solver_control_weight_f4', solver_cfg['control_weight'][3])),
+    ]
+    solver_cfg['terminal_weight'] = [
+        float(getattr(config, 'solver_terminal_weight_px', solver_cfg['terminal_weight'][0])),
+        float(getattr(config, 'solver_terminal_weight_py', solver_cfg['terminal_weight'][1])),
+        float(getattr(config, 'solver_terminal_weight_pz', solver_cfg['terminal_weight'][2])),
+        float(getattr(config, 'solver_terminal_weight_vx', solver_cfg['terminal_weight'][3])),
+        float(getattr(config, 'solver_terminal_weight_vy', solver_cfg['terminal_weight'][4])),
+        float(getattr(config, 'solver_terminal_weight_vz', solver_cfg['terminal_weight'][5])),
+        float(getattr(config, 'solver_terminal_weight_qw', solver_cfg['terminal_weight'][6])),
+        float(getattr(config, 'solver_terminal_weight_qx', solver_cfg['terminal_weight'][7])),
+        float(getattr(config, 'solver_terminal_weight_qy', solver_cfg['terminal_weight'][8])),
+        float(getattr(config, 'solver_terminal_weight_qz', solver_cfg['terminal_weight'][9])),
+        float(getattr(config, 'solver_terminal_weight_wx', solver_cfg['terminal_weight'][10])),
+        float(getattr(config, 'solver_terminal_weight_wy', solver_cfg['terminal_weight'][11])),
+        float(getattr(config, 'solver_terminal_weight_wz', solver_cfg['terminal_weight'][12])),
+    ]
     solver_cfg['regularization'] = float(config.solver_regularization)
     solver_cfg['iter_max'] = int(getattr(config, 'solver_iter_max', solver_cfg['iter_max']))
     solver_cfg['codegen_directory'] = str(config.solver_codegen_directory)
@@ -244,21 +254,6 @@ def apply_dynamic_configuration(params: Dict[str, Any], config: Any) -> Tuple[Di
     controller_cfg = params['controller']
     controller_cfg['thrust_limits'] = [float(config.controller_thrust_min),
                                        float(config.controller_thrust_max)]
-    attitude = controller_cfg.get('attitude_gains', {})
-    attitude.setdefault('roll', {})
-    attitude.setdefault('pitch', {})
-    attitude.setdefault('yaw', {})
-    attitude['roll']['kp'] = float(config.controller_roll_kp)
-    attitude['roll']['kd'] = float(config.controller_roll_kd)
-    attitude['pitch']['kp'] = float(config.controller_pitch_kp)
-    attitude['pitch']['kd'] = float(config.controller_pitch_kd)
-    attitude['yaw']['kp'] = float(config.controller_yaw_kp)
-    attitude['yaw']['kd'] = float(config.controller_yaw_kd)
-    controller_cfg['attitude_gains'] = attitude
-    if hasattr(config, 'controller_max_tilt_deg'):
-        controller_cfg['max_tilt_deg'] = float(config.controller_max_tilt_deg)
-    elif hasattr(config, 'controller_max_tilt_angle'):
-        controller_cfg['max_tilt_deg'] = float(config.controller_max_tilt_angle)
 
     world_cfg = params['world']
     world_cfg['gravity'] = float(config.world_gravity)
@@ -271,14 +266,10 @@ def apply_dynamic_configuration(params: Dict[str, Any], config: Any) -> Tuple[Di
     reference_cfg['default_velocity'] = [float(config.reference_velocity_x),
                                          float(config.reference_velocity_y),
                                          float(config.reference_velocity_z)]
-    reference_cfg['default_acceleration'] = [float(config.reference_acceleration_x),
-                                             float(config.reference_acceleration_y),
-                                             float(config.reference_acceleration_z)]
     reference_cfg['default_yaw'] = float(config.reference_yaw)
 
     topics_cfg = {
         'state': str(config.topic_state),
-        'command': str(config.topic_command),
         'motor': str(config.topic_motor),
         'reference': str(config.topic_reference),
     }
@@ -286,24 +277,17 @@ def apply_dynamic_configuration(params: Dict[str, Any], config: Any) -> Tuple[Di
 
     node_cfg = params['node']
     node_cfg['rate'] = float(config.node_rate)
-    node_cfg['max_tilt_deg'] = float(config.node_max_tilt_deg)
-    node_cfg['yaw_rate_gain'] = float(config.node_yaw_rate_gain)
-    node_cfg['yaw_rate_limit'] = float(config.node_yaw_rate_limit)
     node_cfg['log_interval'] = float(config.node_log_interval)
 
     reference_defaults = {
         'position': reference_cfg['default_position'],
         'velocity': reference_cfg['default_velocity'],
-        'acceleration': reference_cfg['default_acceleration'],
         'yaw': reference_cfg['default_yaw'],
         'frame': reference_cfg['frame'],
     }
 
     node_meta = {
         'rate': node_cfg['rate'],
-        'max_tilt_deg': node_cfg['max_tilt_deg'],
-        'yaw_rate_gain': node_cfg['yaw_rate_gain'],
-        'yaw_rate_limit': node_cfg['yaw_rate_limit'],
         'log_interval': node_cfg['log_interval'],
     }
 
