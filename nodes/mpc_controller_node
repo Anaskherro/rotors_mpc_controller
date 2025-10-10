@@ -14,6 +14,7 @@ from dynamic_reconfigure.server import Server
 from geometry_msgs.msg import PoseStamped
 from mav_msgs.msg import Actuators
 from nav_msgs.msg import Odometry
+from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
 
 from rotors_mpc_controller import (PositionNMPC, ReferenceGenerator,
                                    apply_dynamic_configuration,
@@ -50,6 +51,11 @@ class MPCControllerNode:
         self._controller = PositionNMPC(self._params)
         self._reference = ReferenceGenerator(self._params['reference'])
         self._reference.update_hover_thrust(self._controller.hover_thrust)
+        self._trajectory_active = False
+        self._trajectory_stage = 'idle'
+        self._approach_target: dict | None = None
+        self._pending_trajectory: dict | None = None
+        self._init_reference_trajectory()
         self._topics = dict(self._params['topics'])
         node_cfg = self._params.get('node', {})
         self._rate_hz = float(node_cfg.get('rate', 50.0))
@@ -70,6 +76,8 @@ class MPCControllerNode:
         self._reference_sub = rospy.Subscriber(self._reference_topic, PoseStamped,
                                                self._reference_cb, queue_size=1)
 
+        self._prepare_srv = rospy.Service('~prepare_trajectory', SetBool, self._prepare_service_cb)
+        self._start_srv = rospy.Service('~start_trajectory', SetBool, self._start_service_cb)
         self._timer = rospy.Timer(rospy.Duration(1.0 / self._rate_hz), self._loop)
         self._reconfig_srv = Server(RotorsMPCConfig, self._reconfigure_cb)
         rospy.loginfo('mpc_controller_node: ready (dt=%.3f, horizon=%d)',
@@ -126,9 +134,11 @@ class MPCControllerNode:
             if self._last_command is not None:
                 self._publish_command(self._last_command)
                 self._maybe_log(reference, thrust_cmd, status)
+            self._maybe_progress_trajectory()
             return
         self._publish_command(thrust_cmd)
         self._maybe_log(reference, thrust_cmd, status)
+        self._maybe_progress_trajectory()
 
     @staticmethod
     def _yaw_from_quaternion(qx: float, qy: float, qz: float, qw: float) -> float:
@@ -209,6 +219,7 @@ class MPCControllerNode:
                                             reference_defaults['velocity'],
                                             reference_defaults['yaw'],
                                             frame=reference_defaults['frame'])
+            self._init_reference_trajectory()
 
             if topics_cfg != self._topics:
                 if self._state_sub is not None:
@@ -319,6 +330,195 @@ class MPCControllerNode:
         config.node_log_interval = self._log_interval
 
         return config
+
+    def _init_reference_trajectory(self) -> None:
+        ref_cfg = self._params.get('reference', {})
+        traj_cfg = ref_cfg.get('trajectory')
+        self._pending_trajectory = None
+
+        if not traj_cfg or not traj_cfg.get('enabled', False):
+            if self._trajectory_active:
+                self._reference.clear_trajectory()
+                self._trajectory_active = False
+            self._trajectory_stage = 'idle'
+            self._approach_target = None
+            rospy.loginfo('mpc_controller_node: trajectory disabled; holding hover reference.')
+            return
+
+        dt = float(traj_cfg.get('dt', self._controller.dt))
+        loop = bool(traj_cfg.get('loop', True))
+        traj_type = str(traj_cfg.get('type', 'circle')).lower()
+        start_tol = float(traj_cfg.get('start_position_tolerance', 0.15))
+
+        positions = None
+        yaw = None
+
+        if traj_type == 'circle':
+            positions, yaw = self._build_circular_trajectory(traj_cfg, dt)
+        else:
+            rospy.logwarn('mpc_controller_node: unsupported trajectory type %s', traj_type)
+            return
+
+        if positions is None or positions.size == 0:
+            rospy.logwarn('mpc_controller_node: trajectory generation returned empty positions.')
+            return
+
+        self._pending_trajectory = {
+            'positions': positions,
+            'dt': dt,
+            'yaw': yaw,
+            'loop': loop,
+            'type': traj_type,
+            'start_tolerance': start_tol,
+            'start_yaw': float(yaw[0]) if yaw is not None and yaw.size else None,
+        }
+
+        if self._pending_trajectory['start_yaw'] is None:
+            if positions.shape[0] > 1:
+                delta = positions[1] - positions[0]
+                self._pending_trajectory['start_yaw'] = math.atan2(delta[1], delta[0])
+            else:
+                self._pending_trajectory['start_yaw'] = self._params['reference']['default_yaw']
+
+        rospy.loginfo('mpc_controller_node: prepared %s trajectory with %d samples (dt=%.3f, loop=%s); call ~prepare_trajectory then ~start_trajectory.',
+                      traj_type, positions.shape[0], dt, 'true' if loop else 'false')
+
+        if self._trajectory_stage != 'idle':
+            rospy.loginfo('mpc_controller_node: trajectory updated; re-initiating preparation.')
+            self._begin_trajectory_sequence()
+
+    def _build_circular_trajectory(self, cfg: dict, dt: float) -> tuple[np.ndarray, np.ndarray | None]:
+        radius = float(cfg.get('radius', 1.0))
+        center = np.asarray(cfg.get('center', [0.0, 0.0]), dtype=float).reshape(2)
+        altitude = float(cfg.get('altitude', self._params['reference']['default_position'][2]))
+        revolutions = max(0.1, float(cfg.get('revolutions', 1.0)))
+        speed = float(cfg.get('speed', 1.0))
+
+        period = cfg.get('period')
+        if period is None:
+            circumference = max(2.0 * np.pi * radius, 1e-6)
+            speed = max(speed, 1e-3)
+            period = circumference / speed
+        else:
+            period = float(period)
+
+        samples_per_rev = max(16, int(np.ceil(period / max(dt, 1e-3))))
+        total_samples = max(3, int(np.ceil(samples_per_rev * revolutions)))
+
+        theta = np.linspace(0.0, 2.0 * np.pi * revolutions, total_samples, endpoint=False)
+        x = center[0] + radius * np.cos(theta)
+        y = center[1] + radius * np.sin(theta)
+        z = np.full_like(x, altitude)
+        positions = np.column_stack((x, y, z))
+
+        heading_offset = float(cfg.get('yaw_offset', 0.0))
+        yaw = np.unwrap(theta + np.pi / 2.0 + heading_offset)
+        return positions, yaw
+
+    def _activate_pending_trajectory(self) -> None:
+        if self._pending_trajectory is None:
+            rospy.logwarn('mpc_controller_node: no trajectory available to activate.')
+            return
+
+        traj = self._pending_trajectory
+        yaw_param = traj['yaw'] if traj['yaw'] is not None else None
+        self._reference.set_trajectory(positions=traj['positions'],
+                                       dt=traj['dt'],
+                                       yaw=yaw_param,
+                                       loop=traj['loop'])
+        self._trajectory_active = True
+        self._trajectory_stage = 'track'
+        self._approach_target = None
+        rospy.loginfo('mpc_controller_node: trajectory following enabled.')
+
+    def _deactivate_trajectory(self) -> None:
+        if self._trajectory_stage == 'idle' and not self._trajectory_active:
+            rospy.loginfo('mpc_controller_node: trajectory already inactive.')
+            return
+        self._reference.clear_trajectory()
+        if self._state is not None:
+            yaw = self._yaw_from_quaternion(self._state['quaternion'][1],
+                                            self._state['quaternion'][2],
+                                            self._state['quaternion'][3],
+                                            self._state['quaternion'][0])
+            self._reference.set_target(position=self._state['position'],
+                                       velocity=np.zeros(3),
+                                       yaw=yaw)
+        self._trajectory_active = False
+        self._trajectory_stage = 'idle'
+        self._approach_target = None
+        rospy.loginfo('mpc_controller_node: trajectory control aborted; holding hover.')
+
+    def _prepare_service_cb(self, req: SetBoolRequest) -> SetBoolResponse:
+        if req.data:
+            if self._pending_trajectory is None:
+                return SetBoolResponse(success=False, message='No trajectory configured.')
+            self._begin_trajectory_sequence()
+            return SetBoolResponse(success=True, message='Approaching trajectory start.')
+
+        self._deactivate_trajectory()
+        return SetBoolResponse(success=True, message='Preparation cancelled.')
+
+    def _start_service_cb(self, req: SetBoolRequest) -> SetBoolResponse:
+        if not req.data:
+            self._deactivate_trajectory()
+            return SetBoolResponse(success=True, message='Trajectory stopped.')
+
+        if self._pending_trajectory is None:
+            return SetBoolResponse(success=False, message='No trajectory configured.')
+
+        if self._trajectory_stage not in {'approach', 'ready'}:
+            rospy.logwarn('mpc_controller_node: starting trajectory without preparation stage.')
+        elif self._trajectory_stage == 'approach':
+            rospy.logwarn('mpc_controller_node: starting trajectory before reaching start point.')
+
+        self._activate_pending_trajectory()
+        return SetBoolResponse(success=True, message='Trajectory tracking started.')
+
+    def _begin_trajectory_sequence(self) -> None:
+        if self._pending_trajectory is None:
+            rospy.logwarn('mpc_controller_node: no trajectory configured for start sequence.')
+            return
+
+        start_pos = np.array(self._pending_trajectory['positions'][0], dtype=float)
+        start_yaw = self._pending_trajectory.get('start_yaw')
+        self._reference.clear_trajectory()
+        kwargs: dict[str, object] = {
+            'position': start_pos,
+            'velocity': np.zeros(3),
+        }
+        if start_yaw is not None:
+            kwargs['yaw'] = float(start_yaw)
+        self._reference.set_target(**kwargs)
+        self._trajectory_stage = 'approach'
+        self._trajectory_active = False
+        self._approach_target = {
+            'position': start_pos,
+            'yaw': float(start_yaw) if start_yaw is not None else None,
+        }
+        rospy.loginfo('mpc_controller_node: approaching trajectory start (tolerance=%.2f m).',
+                      self._pending_trajectory.get('start_tolerance', 0.15))
+
+    def _maybe_progress_trajectory(self) -> None:
+        if self._trajectory_stage not in {'approach', 'ready'}:
+            return
+        if self._state is None or self._approach_target is None or self._pending_trajectory is None:
+            return
+
+        target_pos = self._approach_target['position']
+        current_pos = self._state['position']
+        distance = float(np.linalg.norm(current_pos - target_pos))
+        tolerance = float(self._pending_trajectory.get('start_tolerance', 0.15))
+
+        if distance > tolerance:
+            if self._trajectory_stage == 'ready':
+                rospy.loginfo('mpc_controller_node: drifted beyond start tolerance; continuing approach.')
+            self._trajectory_stage = 'approach'
+            return
+
+        if self._trajectory_stage != 'ready':
+            self._trajectory_stage = 'ready'
+            rospy.loginfo('mpc_controller_node: start point reached; call ~start_trajectory to begin tracking.')
 
 
 def main() -> None:

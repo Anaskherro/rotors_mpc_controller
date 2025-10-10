@@ -133,6 +133,48 @@ def _coerce_reference(cfg: Dict[str, Any]) -> None:
     cfg['default_velocity'] = [float(v) for v in cfg.get('default_velocity', [0.0, 0.0, 0.0])]
     cfg['default_acceleration'] = [float(v) for v in cfg.get('default_acceleration', [0.0, 0.0, 0.0])]
     cfg['default_yaw'] = float(cfg.get('default_yaw', 0.0))
+    traj_cfg = cfg.get('trajectory')
+    if isinstance(traj_cfg, dict):
+        traj = dict(traj_cfg)
+        traj['enabled'] = bool(traj.get('enabled', False))
+        traj['type'] = str(traj.get('type', 'circle'))
+        traj['loop'] = bool(traj.get('loop', True))
+        if 'radius' in traj:
+            traj['radius'] = float(traj['radius'])
+        if 'altitude' in traj:
+            traj['altitude'] = float(traj['altitude'])
+        else:
+            traj['altitude'] = cfg['default_position'][2]
+        if 'revolutions' in traj:
+            traj['revolutions'] = float(traj['revolutions'])
+        if 'speed' in traj:
+            traj['speed'] = float(traj['speed'])
+        if 'period' in traj and traj['period'] is not None:
+            traj['period'] = float(traj['period'])
+        else:
+            traj['period'] = None
+        if 'dt' in traj:
+            traj['dt'] = float(traj['dt'])
+        if 'samples' in traj:
+            traj['samples'] = int(traj['samples'])
+        if 'start_position_tolerance' in traj:
+            traj['start_position_tolerance'] = float(traj['start_position_tolerance'])
+        else:
+            traj['start_position_tolerance'] = 0.15
+        if 'center' in traj:
+            center = traj['center']
+            if not isinstance(center, (list, tuple)) or len(center) != 2:
+                raise ValueError('reference.trajectory.center must contain two values.')
+            traj['center'] = [float(center[0]), float(center[1])]
+        else:
+            traj['center'] = [0.0, 0.0]
+        if 'yaw_offset' in traj:
+            traj['yaw_offset'] = float(traj['yaw_offset'])
+        else:
+            traj['yaw_offset'] = 0.0
+        cfg['trajectory'] = traj
+    else:
+        cfg['trajectory'] = None
 
 
 def _coerce_topics(cfg: Dict[str, Any]) -> None:

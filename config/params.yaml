@@ -38,6 +38,19 @@ reference:
   default_velocity: [0.0, 0.0, 0.0]
   default_acceleration: [0.0, 0.0, 0.0]
   default_yaw: 0.0
+  trajectory:
+    enabled: true
+    type: circle
+    radius: 3.5
+    altitude: 1.5
+    center: [0.0, 0.0]
+    revolutions: 3.0
+    speed: 0.3
+    loop: true
+    yaw_offset: 0.0
+    dt: 0.1
+    # Call ~prepare_trajectory first to move to the start point, then ~start_trajectory to begin tracking.
+    start_position_tolerance: 0.15
 
 topics:
   state: /hummingbird/ground_truth/odometry
