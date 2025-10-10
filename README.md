@@ -12,6 +12,8 @@ The package targets ROS Noetic on Ubuntu 20.04 and has been tested against the R
 - Periodic logging of the internal NMPC state, references, and final thrust commands.
 - Configurable parameters via YAML for solver weights, vehicle properties, and thrust limits.
 - Live tuning through `dynamic_reconfigure` (`rqt_reconfigure`) with automatic acados solver regeneration whenever solver parameters change.
+- Minimum-snap trajectory generator (continuous or approach/stop profiles) inspired by data_driven_mpc, including feed-forward thrust and yaw references.
+- RViz visualisation of the flown path via a lightweight path publisher node and bundled display configuration.
 - Gazebo launch integration that spawns the RotorS hummingbird and the NMPC node.
 
 ## Repository layout
@@ -19,13 +21,14 @@ The package targets ROS Noetic on Ubuntu 20.04 and has been tested against the R
 ```
 rotors_mpc_controller/
 ├── cfg/                  # dynamic_reconfigure definitions
-├── config/               # YAML configuration (solver, vehicle, topics)
+├── config/               # YAML configuration + RViz layout
 ├── launch/               # Example launch files
 ├── nodes/                # ROS node entry points (Python)
 ├── src/rotors_mpc_controller/
 │   ├── controller.py     # acados-based NMPC core
 │   ├── params.py         # Parameter loading & validation
-│   └── reference.py      # Reference management utilities
+│   ├── reference.py      # Reference management utilities
+│   └── trajectory.py     # Minimum-snap trajectory generation
 ├── third_party/
 │   └── rotors_simulator/ # RotorS simulator (git submodule)
 ├── README.md
@@ -71,6 +74,7 @@ This launch file will:
 1. Start Gazebo with the RotorS world.
 2. Spawn the hummingbird vehicle.
 3. Launch `mpc_controller_node`, which now maps solver thrusts directly to motor speeds.
+4. Start RViz with the bundled configuration (`config/rotors_mpc.rviz`) and a `path_publisher_node` that traces the actual vehicle path on `/path`.
 
 You can command a new setpoint by publishing a `geometry_msgs/PoseStamped` to `/mpc_controller/setpoint`. Example:
 
@@ -95,8 +99,15 @@ Shipped defaults (also pre-populated in `rqt_reconfigure`) now match the tuned r
 - `horizon_steps = 20`, `dt = 0.05 s`, `iter_max = 600`, `regularization = 7e-3`.
 - Position weights `[10, 10, 8]`, velocity weights `[1, 1, 0.2]`, quaternion weights `[3.2 × 4]`, rate weights `[1.4, 1.4, 0.4]`.
 - Control penalty `1.75` per rotor and terminal weights `[5, 5, 3, 2, 2, 2, 12, 12, 12, 18.5, 2, 2, 1.8]`.
-- Thrust window `[4, 20]` N per motor; the default reference holds the vehicle at `(0, 0, 1)` with zero velocity.
-- Trajectory defaults: 1.5 m radius circular path sampled at 20 Hz. Adjust `start_position_tolerance` to control how close the preparation stage must get before you start tracking.
+- Thrust window `[0, 20]` N per motor; the default reference holds the vehicle at `(0, 0, 2.5)` with zero velocity.
+- Trajectory defaults: 1 m radius, 1 m altitude circular path centred at `(1, 1)` and sampled at 50 Hz. Adjust `start_position_tolerance` to control how close the preparation stage must get before you start tracking.
+
+`reference.trajectory` accepts two execution profiles:
+
+- `profile: stop` (default on old deployments) accelerates, coasts, then brakes back to a hover. Use `revolutions` to decide how many loops should be generated, and set `loop: true` if you want the controller to repeat the precomputed path.
+- `profile: continuous` keeps the vehicle at constant speed and returns to the first point with matched velocity, producing seamless laps when `loop: true`. `revolutions` still controls how many samples are generated in the buffer.
+
+Additional knobs: `clockwise` chooses rotation direction, `center` offsets the circle, `yaw_mode` selects between tangent-following and fixed yaw, and `yaw_constant`/`yaw_offset` fine-tune the desired heading.
 
 Changes take effect immediately when adjusted through `rqt_reconfigure`. For YAML edits, the node rebuilds the solver during startup using the updated values.
 
@@ -139,7 +150,11 @@ rosservice call /mpc_controller_node/start_trajectory "data: true"
 rosservice call /mpc_controller_node/start_trajectory "data: false"
 ```
 
-Trajectory parameters (radius, altitude, speed, loop, `start_position_tolerance`, etc.) live under `reference.trajectory` in `config/params.yaml`. A helper publisher at `src/test/waypoints.py` can stream circular setpoints if you prefer topic-based control instead of the built-in trajectory buffer.
+Trajectory parameters (radius, altitude, speed, profile, revolutions, loop behaviour, `start_position_tolerance`, etc.) live under `reference.trajectory` in `config/params.yaml`. A helper publisher at `src/test/waypoints.py` can stream circular setpoints if you prefer topic-based control instead of the built-in trajectory buffer.
+
+## Visualising the path
+
+When you launch `hummingbird_mpc.launch`, RViz starts automatically with the layout stored in [`config/rotors_mpc.rviz`](config/rotors_mpc.rviz). The included `path_publisher_node` subscribes to `/hummingbird/ground_truth/odometry` and publishes an accumulating `nav_msgs/Path` on `/path`, making it easy to compare the actual trajectory against the MPC reference.
 
 ## Adding as a dependency
 

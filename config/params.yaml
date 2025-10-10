@@ -27,28 +27,33 @@ vehicle:
   rotor_configuration: '+'
 
 controller:
-  thrust_limits: [4.0, 20.0]
+  thrust_limits: [0.0, 20.0]
 
 world:
   gravity: 9.81
 
 reference:
   frame: world
-  default_position: [0.0, 0.0, 1.0]
+  default_position: [0.0, 0.0, 2.5]
   default_velocity: [0.0, 0.0, 0.0]
   default_acceleration: [0.0, 0.0, 0.0]
   default_yaw: 0.0
   trajectory:
     enabled: true
     type: circle
-    radius: 3.5
-    altitude: 1.5
-    center: [0.0, 0.0]
-    revolutions: 3.0
-    speed: 0.3
+    radius: 1.0
+    altitude: 1.0
+    center: [1.0, 1.0]
+    max_speed: 0.5
+    linear_acceleration: 0.1
+    clockwise: true
     loop: true
+    profile: continuous
+    revolutions: 1.0
+    yaw_mode: fixed
+    yaw_constant: 0.0
     yaw_offset: 0.0
-    dt: 0.1
+    dt: 0.02
     # Call ~prepare_trajectory first to move to the start point, then ~start_trajectory to begin tracking.
     start_position_tolerance: 0.15
 

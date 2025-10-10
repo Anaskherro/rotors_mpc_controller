@@ -4,8 +4,12 @@
   <include file="$(find rotors_gazebo)/launch/mav.launch">
     <arg name="mav_name" value="hummingbird" />
   </include>
-
-  <!-- Controller nodes -->
+  <!-- includ rviz with config file-->
+  <node pkg="rviz" type="rviz" name="rviz" args="-d $(find rotors_mpc_controller)/config/rotors_mpc.rviz" />
+  <node pkg="rotors_mpc_controller" 
+        type="path_publisher_node"
+        name="path_publisher_node"
+        output="screen" />
   <node pkg="rotors_mpc_controller"
         type="mpc_controller_node"
         name="mpc_controller_node"

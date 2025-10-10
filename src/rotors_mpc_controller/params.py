@@ -139,6 +139,12 @@ def _coerce_reference(cfg: Dict[str, Any]) -> None:
         traj['enabled'] = bool(traj.get('enabled', False))
         traj['type'] = str(traj.get('type', 'circle'))
         traj['loop'] = bool(traj.get('loop', True))
+        traj['yaw_mode'] = str(traj.get('yaw_mode', 'follow')).lower()
+        if traj['yaw_mode'] not in {'follow', 'fixed'}:
+            raise ValueError("reference.trajectory.yaw_mode must be 'follow' or 'fixed'.")
+        traj['profile'] = str(traj.get('profile', 'stop')).lower()
+        if traj['profile'] not in {'stop', 'continuous'}:
+            raise ValueError("reference.trajectory.profile must be 'stop' or 'continuous'.")
         if 'radius' in traj:
             traj['radius'] = float(traj['radius'])
         if 'altitude' in traj:
@@ -147,16 +153,19 @@ def _coerce_reference(cfg: Dict[str, Any]) -> None:
             traj['altitude'] = cfg['default_position'][2]
         if 'revolutions' in traj:
             traj['revolutions'] = float(traj['revolutions'])
-        if 'speed' in traj:
-            traj['speed'] = float(traj['speed'])
-        if 'period' in traj and traj['period'] is not None:
-            traj['period'] = float(traj['period'])
         else:
-            traj['period'] = None
-        if 'dt' in traj:
-            traj['dt'] = float(traj['dt'])
-        if 'samples' in traj:
-            traj['samples'] = int(traj['samples'])
+            traj['revolutions'] = 1.0
+        traj['clockwise'] = bool(traj.get('clockwise', False))
+        if 'linear_acceleration' in traj:
+            traj['linear_acceleration'] = float(traj['linear_acceleration'])
+        else:
+            traj['linear_acceleration'] = 0.25
+        if 'max_speed' in traj:
+            traj['max_speed'] = float(traj['max_speed'])
+        elif 'speed' in traj:
+            traj['max_speed'] = float(traj.pop('speed'))
+        else:
+            traj['max_speed'] = 1.0
         if 'start_position_tolerance' in traj:
             traj['start_position_tolerance'] = float(traj['start_position_tolerance'])
         else:
@@ -168,10 +177,16 @@ def _coerce_reference(cfg: Dict[str, Any]) -> None:
             traj['center'] = [float(center[0]), float(center[1])]
         else:
             traj['center'] = [0.0, 0.0]
+        if 'dt' in traj:
+            traj['dt'] = float(traj['dt'])
         if 'yaw_offset' in traj:
             traj['yaw_offset'] = float(traj['yaw_offset'])
         else:
             traj['yaw_offset'] = 0.0
+        if 'yaw_constant' in traj:
+            traj['yaw_constant'] = float(traj['yaw_constant'])
+        else:
+            traj['yaw_constant'] = float(cfg['default_yaw'])
         cfg['trajectory'] = traj
     else:
         cfg['trajectory'] = None
