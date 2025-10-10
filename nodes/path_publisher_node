@@ -7,8 +7,7 @@ from nav_msgs.msg import Odometry
 
 class PathPublisher:
     def __init__(self):
-        rospy.init_node('path_publisher')
-        self.path_pub = rospy.Publisher('/path', Path, queue_size=10)
+        self.path_pub = rospy.Publisher('/path', Path, queue_size=10, latch=True)
         self.path_msg = Path()
         self.path_msg.header.frame_id = "world"
         rospy.Subscriber('/hummingbird/ground_truth/odometry', Odometry, self.odom_callback)
@@ -20,14 +19,20 @@ class PathPublisher:
         pose.pose = msg.pose.pose
         self.path_msg.header.stamp = rospy.Time.now()
         self.path_msg.poses.append(pose)
-        self.path_pub.publish(self.path_msg)
+        try:
+            self.path_pub.publish(self.path_msg)
+        except rospy.ROSException as exc:
+            rospy.logwarn_throttle(5.0, "Unable to publish path: %s", exc)
 
     def run(self):
         rospy.spin()
 
+def main():
+    rospy.init_node('path_publisher')
+    path_publisher = PathPublisher()
+    path_publisher.run()
 if __name__ == '__main__':
     try:
-        PathPublisher().run()
+        main()
     except rospy.ROSInterruptException:
         pass
-
