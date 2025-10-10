@@ -86,7 +86,7 @@ All runtime parameters live in [`config/params.yaml`](config/params.yaml). Key s
 - `solver`: NMPC horizon, discretization, quadratic weights, and regularisation.
 - `vehicle`: mass, inertia, arm length, rotor constants, motor speed limits.
 - `controller`: rotor thrust limits.
-- `reference`: default hold position/velocity/yaw.
+- `reference`: default hold position/velocity/yaw plus optional trajectory staging.
 - `topics`: ROS topic names for state, motor speeds, and setpoint input.
 - `node`: execution rate and logging interval.
 
@@ -96,6 +96,7 @@ Shipped defaults (also pre-populated in `rqt_reconfigure`) now match the tuned r
 - Position weights `[10, 10, 8]`, velocity weights `[1, 1, 0.2]`, quaternion weights `[3.2 × 4]`, rate weights `[1.4, 1.4, 0.4]`.
 - Control penalty `1.75` per rotor and terminal weights `[5, 5, 3, 2, 2, 2, 12, 12, 12, 18.5, 2, 2, 1.8]`.
 - Thrust window `[4, 20]` N per motor; the default reference holds the vehicle at `(0, 0, 1)` with zero velocity.
+- Trajectory defaults: 1.5 m radius circular path sampled at 20 Hz. Adjust `start_position_tolerance` to control how close the preparation stage must get before you start tracking.
 
 Changes take effect immediately when adjusted through `rqt_reconfigure`. For YAML edits, the node rebuilds the solver during startup using the updated values.
 
@@ -120,6 +121,25 @@ MPC log: status=<acados_status> pos=<current> vel=<current_vel> quat=<current_qu
 ```
 
 Use this to diagnose divergence, saturation, or solver failures. If acados returns a non-zero status, the node reuses the last valid command and logs the snapshot so you can inspect what happened.
+
+## Staged trajectory workflow
+
+The controller can preload a full trajectory (e.g. a circular path) and follow it on command. Two private services manage the stages:
+
+- `rosservice call /mpc_controller_node/prepare_trajectory "data: true"` moves the vehicle to the trajectory’s starting waypoint and holds position.
+- `rosservice call /mpc_controller_node/start_trajectory "data: true"` begins MPC tracking of the stored path. Call either service with `data: false` to abort and return to hover.
+
+Example session:
+
+```bash
+roslaunch rotors_mpc_controller hummingbird_mpc.launch
+rosservice call /mpc_controller_node/prepare_trajectory "data: true"
+rosservice call /mpc_controller_node/start_trajectory "data: true"
+# ... later ...
+rosservice call /mpc_controller_node/start_trajectory "data: false"
+```
+
+Trajectory parameters (radius, altitude, speed, loop, `start_position_tolerance`, etc.) live under `reference.trajectory` in `config/params.yaml`. A helper publisher at `src/test/waypoints.py` can stream circular setpoints if you prefer topic-based control instead of the built-in trajectory buffer.
 
 ## Adding as a dependency
 
