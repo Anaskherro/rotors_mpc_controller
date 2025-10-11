@@ -11,11 +11,11 @@ from typing import Optional
 
 import rospy
 from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import Odometry
-from python_qt_binding.QtCore import Qt, QTimer
-from python_qt_binding.QtWidgets import (QDoubleSpinBox, QFormLayout, QGroupBox,
+from nav_msgs.msg import Odometry   #type: ignore
+from python_qt_binding.QtCore import Qt, QTimer #type: ignore
+from python_qt_binding.QtWidgets import (QDoubleSpinBox, QFormLayout, QGroupBox, # type: ignore
                                          QHBoxLayout, QLabel, QLineEdit,
-                                         QPushButton, QVBoxLayout, QWidget)
+                                         QPushButton, QVBoxLayout, QWidget) 
 from qt_gui.plugin import Plugin
 from std_srvs.srv import SetBool
 
@@ -113,6 +113,10 @@ class MPCControlPlugin(Plugin):
         self._setpoint_pub: Optional[rospy.Publisher] = None
         self._prepare_client: Optional[rospy.ServiceProxy] = None
         self._start_client: Optional[rospy.ServiceProxy] = None
+        self._setpoint_topic_name: Optional[str] = None
+        self._odom_topic_name: Optional[str] = None
+        self._prepare_service_name: Optional[str] = None
+        self._start_service_name: Optional[str] = None
 
         self._refresh_timer = QTimer(self._widget)
         self._refresh_timer.setInterval(200)
@@ -126,6 +130,8 @@ class MPCControlPlugin(Plugin):
 
         # Connections are established lazily to allow adjusting topics before publishing.
         self._connections_ready = False
+        self._connection_retry_ms = 1000
+        QTimer.singleShot(0, self._attempt_initial_connection)
 
     def _make_spin_box(self, minimum: float, maximum: float, *, decimals: int = 3) -> QDoubleSpinBox:
         box = QDoubleSpinBox(self._widget)
@@ -196,6 +202,15 @@ class MPCControlPlugin(Plugin):
         layout.addWidget(self._status_label)
         layout.addStretch()
 
+    def _attempt_initial_connection(self) -> None:
+        if self._connections_ready:
+            return
+        try:
+            self._ensure_connections()
+        except rospy.ROSException:
+            self._set_status('Waiting for MPC topics/services...', error=True)
+            QTimer.singleShot(self._connection_retry_ms, self._attempt_initial_connection)
+
     def _ensure_connections(self) -> None:
         if self._connections_ready:
             return
@@ -205,10 +220,26 @@ class MPCControlPlugin(Plugin):
         prepare_srvs = self._prepare_service_input.text().strip() or '/mpc_controller_node/prepare_trajectory'
         start_srvs = self._start_service_input.text().strip() or '/mpc_controller_node/start_trajectory'
 
-        self._setpoint_pub = rospy.Publisher(setpoint_topic, PoseStamped, queue_size=1)
-        self._odom_sub = rospy.Subscriber(odom_topic, Odometry, self._odom_cb, queue_size=1)
-        self._prepare_client = rospy.ServiceProxy(prepare_srvs, SetBool, persistent=False)
-        self._start_client = rospy.ServiceProxy(start_srvs, SetBool, persistent=False)
+        if self._setpoint_pub is None or self._setpoint_topic_name != setpoint_topic:
+            self._setpoint_pub = rospy.Publisher(setpoint_topic, PoseStamped, queue_size=1)
+            self._setpoint_topic_name = setpoint_topic
+        if self._odom_sub is None or self._odom_topic_name != odom_topic:
+            if self._odom_sub is not None:
+                self._odom_sub.unregister()
+            self._odom_sub = rospy.Subscriber(odom_topic, Odometry, self._odom_cb, queue_size=1)
+            self._odom_topic_name = odom_topic
+        if self._prepare_client is None or self._prepare_service_name != prepare_srvs:
+            self._prepare_client = rospy.ServiceProxy(prepare_srvs, SetBool, persistent=True)
+            self._prepare_service_name = prepare_srvs
+        if self._start_client is None or self._start_service_name != start_srvs:
+            self._start_client = rospy.ServiceProxy(start_srvs, SetBool, persistent=True)
+            self._start_service_name = start_srvs
+
+        try:
+            rospy.wait_for_service(prepare_srvs, timeout=2.0)
+            rospy.wait_for_service(start_srvs, timeout=2.0)
+        except rospy.ROSException as exc:
+            raise
 
         self._connections_ready = True
         self._set_status(f'Connected to {setpoint_topic}', error=False)
@@ -293,6 +324,12 @@ class MPCControlPlugin(Plugin):
             return
 
         try:
+            client.wait_for_service(timeout=1.0)
+        except rospy.ROSException as exc:
+            self._set_status(f'{label.title()} service unavailable: {exc}', error=True)
+            return
+
+        try:
             response = client(enable)
         except rospy.ServiceException as exc:
             self._set_status(f'{label.title()} call failed: {exc}', error=True)
@@ -315,9 +352,13 @@ class MPCControlPlugin(Plugin):
         if self._odom_sub is not None:
             self._odom_sub.unregister()
             self._odom_sub = None
+        self._odom_topic_name = None
         self._setpoint_pub = None
+        self._setpoint_topic_name = None
         self._prepare_client = None
         self._start_client = None
+        self._prepare_service_name = None
+        self._start_service_name = None
 
     def save_settings(self, plugin_settings, instance_settings) -> None:
         instance_settings.set_value('frame_id', self._frame_id_input.text())
