@@ -4,22 +4,46 @@ import rospy
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
+from collections import deque
+
 
 class PathPublisher:
     def __init__(self):
-        self.path_pub = rospy.Publisher('/path', Path, queue_size=10, latch=True)
+        self.frame_id = rospy.get_param('~frame_id', 'world')
+        latch = rospy.get_param('~latch', False)
+        queue_size = rospy.get_param('~queue_size', 10)
+        self.decimation = max(1, rospy.get_param('~decimation', 3))
+        self.max_history = max(1, rospy.get_param('~max_history', 10000))
+
+        self.path_pub = rospy.Publisher('/path', Path, queue_size=queue_size, latch=latch)
+
         self.path_msg = Path()
-        self.path_msg.header.frame_id = "world"
+        self.path_msg.header.frame_id = self.frame_id
+        self._poses = deque(maxlen=self.max_history)
+        self._counter = 0
+        self._seq = 0
+
         rospy.Subscriber('/hummingbird/ground_truth/odometry', Odometry, self.odom_callback)
 
     def odom_callback(self, msg):
+        self._counter += 1
+        if self._counter % self.decimation != 0:
+            return
+
         pose = PoseStamped()
-        pose.header = msg.header
-        pose.header.frame_id = "world"
+        pose.header.stamp = msg.header.stamp
+        pose.header.frame_id = self.frame_id
         pose.pose = msg.pose.pose
-        self.path_msg.header.stamp = rospy.Time.now()
-        self.path_msg.poses.append(pose)
+
+        self._poses.append(pose)
+
+        self.path_msg.header.stamp = msg.header.stamp
+        self.path_msg.header.seq = self._seq
+        self._seq += 1
+        self.path_msg.poses = list(self._poses)
+
         try:
+            # Keeping the outgoing message bounded prevents publish() from stalling behind RViz.
             self.path_pub.publish(self.path_msg)
         except rospy.ROSException as exc:
             rospy.logwarn_throttle(5.0, "Unable to publish path: %s", exc)
@@ -27,10 +51,13 @@ class PathPublisher:
     def run(self):
         rospy.spin()
 
+
 def main():
     rospy.init_node('path_publisher')
     path_publisher = PathPublisher()
     path_publisher.run()
+
+
 if __name__ == '__main__':
     try:
         main()
