@@ -48,7 +48,7 @@ rotors_mpc_controller/
 ```bash
 cd ~/catkin_ws/src
 # Clone this repository and pull submodules
-git clone --recurse-submodules https://github.com/<your-user>/rotors_mpc_controller.git
+git clone --recurse-submodules https://github.com/anaskherro/rotors_mpc_controller.git
 cd rotors_mpc_controller
 # If you cloned without --recurse-submodules, run:
 #   git submodule update --init --recursive
@@ -162,7 +162,7 @@ To use the controller in another catkin workspace:
 
 ```bash
 cd ~/catkin_ws/src
-git submodule add https://github.com/<your-user>/rotors_mpc_controller.git rotors_mpc_controller
+git submodule add https://github.com/anaskherro/rotors_mpc_controller.git rotors_mpc_controller
 cd rotors_mpc_controller
 git submodule update --init --recursive
 ```
