@@ -1,0 +1,14 @@
+<library path="lib">
+  <class name="Rotors MPC Control"
+         type="rotors_mpc_controller.rqt_mpc_panel.MPCControlPlugin"
+         base_class_type="rqt_gui_py::Plugin">
+    <description>Command setpoints and trajectory services for the Rotors MPC controller.</description>
+    <qtgui>
+      <group>
+        <label>Rotors MPC</label>
+      </group>
+      <label>MPC Control</label>
+      <icon type="theme">applications-system</icon>
+    </qtgui>
+  </class>
+</library>

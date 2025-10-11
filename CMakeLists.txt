@@ -7,7 +7,11 @@ find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   nav_msgs
   mav_msgs
+  std_srvs
   dynamic_reconfigure
+  rqt_gui
+  rqt_gui_py
+  python_qt_binding
 )
 
 catkin_python_setup()
@@ -21,4 +25,9 @@ catkin_package()
 catkin_install_python(PROGRAMS
   nodes/mpc_controller_node
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(FILES
+  resource/mpc_control_plugin.xml
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/resource
 )

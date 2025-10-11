@@ -4,14 +4,14 @@
     "mainwindow": {
       "keys": {
         "geometry": {
-          "repr(QByteArray.hex)": "QtCore.QByteArray(b'01d9d0cb000200000000007400000072000006da0000041a0000007400000097000006da0000041a00000000000000000780')",
+          "repr(QByteArray.hex)": "QtCore.QByteArray(b'01d9d0cb000300000000010900000075000003900000041d000001090000009a000003900000041d00000000000000000780000001090000009a000003900000041d')",
           "type": "repr(QByteArray.hex)",
-          "pretty-print": "     t r     t           "
+          "pretty-print": "       u                         "
         },
         "state": {
-          "repr(QByteArray.hex)": "QtCore.QByteArray(b'000000ff00000000fd00000001000000030000066700000358fc0100000002fc00000000000003530000000000fffffffc0200000001fb00000042007200710074005f0070006c006f0074005f005f0050006c006f0074005f005f0031005f005f00440061007400610050006c006f0074005700690064006700650074030000006b000001fb00000353000000f9fc00000000000006670000023d00fffffffc0200000003fb00000072007200710074005f0073006500720076006900630065005f00630061006c006c00650072005f005f005300650072007600690063006500430061006c006c00650072005f005f0032005f005f005300650072007600690063006500430061006c006c006500720057006900640067006500740100000016000001260000010400fffffffb00000072007200710074005f0073006500720076006900630065005f00630061006c006c00650072005f005f005300650072007600690063006500430061006c006c00650072005f005f0031005f005f005300650072007600690063006500430061006c006c006500720057006900640067006500740100000142000001240000010400fffffffb00000058007200710074005f007000750062006c00690073006800650072005f005f005000750062006c00690073006800650072005f005f0031005f005f005000750062006c00690073006800650072005700690064006700650074010000026c000001020000008c00ffffff000006670000000000000004000000040000000800000008fc00000001000000030000000100000036004d0069006e0069006d0069007a006500640044006f0063006b00570069006400670065007400730054006f006f006c0062006100720000000000ffffffff0000000000000000')",
+          "repr(QByteArray.hex)": "QtCore.QByteArray(b'000000ff00000000fd00000001000000030000028800000358fc0100000003fc00000000000003530000000000fffffffc0200000001fb00000042007200710074005f0070006c006f0074005f005f0050006c006f0074005f005f0031005f005f00440061007400610050006c006f0074005700690064006700650074030000006b000001fb00000353000000f9fc00000000000004ba0000000000fffffffc0200000003fb00000072007200710074005f0073006500720076006900630065005f00630061006c006c00650072005f005f005300650072007600690063006500430061006c006c00650072005f005f0032005f005f005300650072007600690063006500430061006c006c006500720057006900640067006500740100000016000001260000000000000000fb00000072007200710074005f0073006500720076006900630065005f00630061006c006c00650072005f005f005300650072007600690063006500430061006c006c00650072005f005f0031005f005f005300650072007600690063006500430061006c006c006500720057006900640067006500740100000016000001c30000000000000000fb00000058007200710074005f007000750062006c00690073006800650072005f005f005000750062006c00690073006800650072005f005f0031005f005f005000750062006c006900730068006500720057006900640067006500740100000016000003580000000000000000fb000000860072006f0074006f00720073005f006d00700063005f0063006f006e00740072006f006c006c00650072005f005f0052006f0074006f007200730020004d0050004300200043006f006e00740072006f006c005f005f0031005f005f0052006f0074006f00720073004d005000430043006f006e00740072006f006c00500061006e0065006c010000000000000288000001a700ffffff000002880000000000000004000000040000000800000008fc00000001000000030000000100000036004d0069006e0069006d0069007a006500640044006f0063006b00570069006400670065007400730054006f006f006c0062006100720000000000ffffffff0000000000000000')",
           "type": "repr(QByteArray.hex)",
-          "pretty-print": "                   S                                            k   S               rrqt_service_caller__ServiceCaller__2__ServiceCallerWidget          rrqt_service_caller__ServiceCaller__1__ServiceCallerWidget          Xrqt_publisher__Publisher__1__PublisherWidget                            6MinimizedDockWidgetsToolbar        "
+          "pretty-print": "                   S                                            k   S               rrqt_service_caller__ServiceCaller__2__ServiceCallerWidget          rrqt_service_caller__ServiceCaller__1__ServiceCallerWidget          Xrqt_publisher__Publisher__1__PublisherWidget           rotors_mpc_controller__Rotors MPC Control__1__RotorsMPCControlPanel                            6MinimizedDockWidgetsToolbar        "
         }
       },
       "groups": {
@@ -29,11 +29,66 @@
     "pluginmanager": {
       "keys": {
         "running-plugins": {
-          "repr": "{'rqt_publisher/Publisher': [1], 'rqt_service_caller/ServiceCaller': [1, 2]}",
+          "repr": "{'rotors_mpc_controller/Rotors MPC Control': [1]}",
           "type": "repr"
         }
       },
       "groups": {
+        "plugin__rotors_mpc_controller__Rotors MPC Control__1": {
+          "keys": {},
+          "groups": {
+            "dock_widget__RotorsMPCControlPanel": {
+              "keys": {
+                "dock_widget_title": {
+                  "repr": "'Rotors MPC Control'",
+                  "type": "repr"
+                },
+                "dockable": {
+                  "repr": "True",
+                  "type": "repr"
+                },
+                "parent": {
+                  "repr": "None",
+                  "type": "repr"
+                }
+              },
+              "groups": {}
+            },
+            "plugin": {
+              "keys": {
+                "frame_id": {
+                  "repr": "'world'",
+                  "type": "repr"
+                },
+                "odom_topic": {
+                  "repr": "'/hummingbird/ground_truth/odometry'",
+                  "type": "repr"
+                },
+                "pos_values": {
+                  "repr": "[1.0, 2.0, 1.0]",
+                  "type": "repr"
+                },
+                "prepare_service": {
+                  "repr": "'/mpc_controller_node/prepare_trajectory'",
+                  "type": "repr"
+                },
+                "rpy_values": {
+                  "repr": "[0.0, 0.0, 0.0]",
+                  "type": "repr"
+                },
+                "setpoint_topic": {
+                  "repr": "'/mpc_controller/setpoint'",
+                  "type": "repr"
+                },
+                "start_service": {
+                  "repr": "'/mpc_controller_node/start_trajectory'",
+                  "type": "repr"
+                }
+              },
+              "groups": {}
+            }
+          }
+        },
         "plugin__rqt_plot__Plot__1": {
           "keys": {},
           "groups": {
@@ -104,7 +159,7 @@
             "plugin": {
               "keys": {
                 "publishers": {
-                  "repr": "\"[{'topic_name': '/mpc_controller/setpoint', 'type_name': 'geometry_msgs/PoseStamped', 'rate': 1.0, 'enabled': False, 'publisher_id': 0, 'counter': 7415, 'expressions': {'/mpc_controller/setpoint/pose/position/z': '1.0', '/mpc_controller/setpoint/pose/position/y': '0.0', '/mpc_controller/setpoint/pose/position/x': '0.0', '/mpc_controller/setpoint/pose/orientation/w': '1.0', '/mpc_controller/setpoint/pose/orientation/z': '0.0', '/mpc_controller/setpoint/pose/orientation/x': '0.0', '/mpc_controller/setpoint/pose/orientation/y': '0.0'}}]\"",
+                  "repr": "\"[{'topic_name': '/mpc_controller/setpoint', 'type_name': 'geometry_msgs/PoseStamped', 'rate': 1.0, 'enabled': False, 'publisher_id': 0, 'counter': 0, 'expressions': {'/mpc_controller/setpoint/pose/position/z': '1.0', '/mpc_controller/setpoint/pose/position/y': '0.0', '/mpc_controller/setpoint/pose/position/x': '0.0', '/mpc_controller/setpoint/pose/orientation/w': '1.0', '/mpc_controller/setpoint/pose/orientation/z': '0.0', '/mpc_controller/setpoint/pose/orientation/x': '0.0', '/mpc_controller/setpoint/pose/orientation/y': '0.0'}}]\"",
                   "type": "repr"
                 }
               },
@@ -166,7 +221,7 @@
             "plugin": {
               "keys": {
                 "current_service_name": {
-                  "repr": "'/mpc_controller_node/prepare_trajectory'",
+                  "repr": "'/gazebo/delete_light'",
                   "type": "repr"
                 },
                 "splitter_orientation": {
@@ -201,7 +256,7 @@
             "plugin": {
               "keys": {
                 "current_service_name": {
-                  "repr": "'/mpc_controller_node/start_trajectory'",
+                  "repr": "'/gazebo/apply_body_wrench'",
                   "type": "repr"
                 },
                 "splitter_orientation": {

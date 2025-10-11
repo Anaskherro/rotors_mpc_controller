@@ -14,8 +14,14 @@
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>mav_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>dynamic_reconfigure</depend>
   <depend>tf2_ros</depend>
+  <depend>rqt_gui</depend>
+  <depend>rqt_gui_py</depend>
+  <depend>python_qt_binding</depend>
 
-  <export/>
+  <export>
+    <rqt_gui plugin="${prefix}/resource/mpc_control_plugin.xml"/>
+  </export>
 </package>
