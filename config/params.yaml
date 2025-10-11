@@ -41,19 +41,19 @@ reference:
   trajectory:
     enabled: true
     type: circle
-    radius: 4.0
+    radius: 5.0
     altitude: 1.0
     center: [0.0, 0.0]
-    max_speed: 1.0
-    linear_acceleration: 0.8
+    max_speed: 2.0
+    linear_acceleration: 2.0
     clockwise: true
     loop: false
     profile: continuous
-    revolutions: 2.0
+    revolutions: 3.0
     yaw_mode: fixed
     yaw_constant: 0.0
     yaw_offset: 0.0
-    dt: 0.03
+    dt: 0.05
     # Call ~prepare_trajectory first to move to the start point, then ~start_trajectory to begin tracking.
     start_position_tolerance: 0.15
 
@@ -61,6 +61,7 @@ topics:
   state: /hummingbird/ground_truth/odometry
   motor: /hummingbird/command/motor_speed
   reference: /mpc_controller/setpoint
+  reference_path: /mpc_controller/reference_path
 
 node:
   rate: 60.0

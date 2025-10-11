@@ -13,7 +13,7 @@ import rospy
 from dynamic_reconfigure.server import Server
 from geometry_msgs.msg import PoseStamped
 from mav_msgs.msg import Actuators
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
 
 from rotors_mpc_controller import (PositionNMPC, ReferenceGenerator,
@@ -56,7 +56,6 @@ class MPCControllerNode:
         self._trajectory_stage = 'idle'
         self._approach_target: dict | None = None
         self._pending_trajectory: dict | None = None
-        self._init_reference_trajectory()
         self._topics = dict(self._params['topics'])
         node_cfg = self._params.get('node', {})
         self._rate_hz = float(node_cfg.get('rate', 50.0))
@@ -76,6 +75,8 @@ class MPCControllerNode:
         self._reference_topic = self._topics.get('reference', '~setpoint')
         self._reference_sub = rospy.Subscriber(self._reference_topic, PoseStamped,
                                                self._reference_cb, queue_size=1)
+        self._reference_path_pub = rospy.Publisher(self._topics.get('reference_path', '~reference_path'),
+                                                   Path, queue_size=1, latch=True)
 
         self._prepare_srv = rospy.Service('~prepare_trajectory', SetBool, self._prepare_service_cb)
         self._start_srv = rospy.Service('~start_trajectory', SetBool, self._start_service_cb)
@@ -83,6 +84,7 @@ class MPCControllerNode:
         self._reconfig_srv = Server(RotorsMPCConfig, self._reconfigure_cb)
         rospy.loginfo('mpc_controller_node: ready (dt=%.3f, horizon=%d)',
                       self._controller.dt, self._controller.horizon)
+        self._init_reference_trajectory()
 
     def _reference_cb(self, msg: PoseStamped) -> None:
         position = np.array([msg.pose.position.x,
@@ -229,6 +231,8 @@ class MPCControllerNode:
                     self._reference_sub.unregister()
                 if self._motor_pub is not None:
                     self._motor_pub.unregister()
+                if getattr(self, '_reference_path_pub', None) is not None:
+                    self._reference_path_pub.unregister()
                 self._topics = dict(topics_cfg)
                 self._motor_pub = rospy.Publisher(self._topics['motor'], Actuators, queue_size=1)
                 self._state_sub = rospy.Subscriber(self._topics['state'], Odometry,
@@ -236,6 +240,17 @@ class MPCControllerNode:
                 self._reference_topic = self._topics['reference']
                 self._reference_sub = rospy.Subscriber(self._reference_topic, PoseStamped,
                                                        self._reference_cb, queue_size=1)
+                self._reference_path_pub = rospy.Publisher(self._topics.get('reference_path', '~reference_path'),
+                                                           Path, queue_size=1, latch=True)
+                traj_data = None
+                if self._pending_trajectory is not None:
+                    traj_data = self._pending_trajectory.get('data')
+                if isinstance(traj_data, dict):
+                    self._publish_reference_path(traj_data.get('positions'),
+                                                 traj_data.get('quaternions'),
+                                                 traj_data.get('times'))
+                else:
+                    self._publish_reference_path(None)
 
             new_rate = node_meta['rate']
             if new_rate > 0.0 and not math.isclose(new_rate, self._rate_hz):
@@ -343,6 +358,7 @@ class MPCControllerNode:
                 self._trajectory_active = False
             self._trajectory_stage = 'idle'
             self._approach_target = None
+            self._publish_reference_path(None)
             rospy.loginfo('mpc_controller_node: trajectory disabled; holding hover reference.')
             return
 
@@ -385,6 +401,10 @@ class MPCControllerNode:
             else:
                 self._pending_trajectory['start_yaw'] = self._params['reference']['default_yaw']
 
+        self._publish_reference_path(positions,
+                                     trajectory_data.get('quaternions'),
+                                     trajectory_data.get('times'))
+
         rospy.loginfo('mpc_controller_node: prepared %s trajectory with %d samples (dt=%.3f, loop=%s); call ~prepare_trajectory then ~start_trajectory.',
                       traj_type, positions.shape[0], self._pending_trajectory['dt'], 'true' if loop else 'false')
 
@@ -394,6 +414,59 @@ class MPCControllerNode:
 
     def _build_circular_trajectory(self, cfg: dict, dt: float) -> dict[str, np.ndarray]:
         return generate_loop_reference(self._controller, cfg, dt)
+
+    def _publish_reference_path(self,
+                                positions: np.ndarray | None,
+                                quaternions: np.ndarray | None = None,
+                                times: np.ndarray | None = None) -> None:
+        if self._reference_path_pub is None:
+            return
+
+        path_msg = Path()
+        frame_id = self._params['reference'].get('frame', 'world')
+        path_msg.header.frame_id = frame_id
+        path_msg.header.stamp = rospy.Time.now()
+
+        if positions is not None and positions.size:
+            pos_array = np.asarray(positions, dtype=float)
+            quat_array: np.ndarray | None = None
+            if quaternions is not None:
+                quat_array = np.asarray(quaternions, dtype=float)
+                if quat_array.shape[0] != pos_array.shape[0]:
+                    quat_array = None
+            time_array: np.ndarray | None = None
+            if times is not None:
+                time_array = np.asarray(times, dtype=float)
+                if time_array.shape[0] != pos_array.shape[0]:
+                    time_array = None
+
+            for idx, position in enumerate(pos_array):
+                pose = PoseStamped()
+                pose.header.frame_id = frame_id
+                if time_array is not None:
+                    pose.header.stamp = path_msg.header.stamp + rospy.Duration.from_sec(float(time_array[idx]))
+                else:
+                    pose.header.stamp = path_msg.header.stamp
+
+                pose.pose.position.x = float(position[0])
+                pose.pose.position.y = float(position[1])
+                pose.pose.position.z = float(position[2])
+
+                if quat_array is not None:
+                    quat = quat_array[idx]
+                    pose.pose.orientation.w = float(quat[0])
+                    pose.pose.orientation.x = float(quat[1])
+                    pose.pose.orientation.y = float(quat[2])
+                    pose.pose.orientation.z = float(quat[3])
+                else:
+                    pose.pose.orientation.w = 1.0
+                    pose.pose.orientation.x = 0.0
+                    pose.pose.orientation.y = 0.0
+                    pose.pose.orientation.z = 0.0
+
+                path_msg.poses.append(pose)
+
+        self._reference_path_pub.publish(path_msg)
 
     def _activate_pending_trajectory(self) -> None:
         if self._pending_trajectory is None:
@@ -410,6 +483,9 @@ class MPCControllerNode:
                                        thrusts=data['thrusts'],
                                        yaw=data['yaws'],
                                        loop=traj['loop'])
+        self._publish_reference_path(data.get('positions'),
+                                     data.get('quaternions'),
+                                     data.get('times'))
         self._trajectory_active = True
         self._trajectory_stage = 'track'
         self._approach_target = None

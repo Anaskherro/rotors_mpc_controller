@@ -193,10 +193,13 @@ def _coerce_reference(cfg: Dict[str, Any]) -> None:
 
 
 def _coerce_topics(cfg: Dict[str, Any]) -> None:
-    for key in ('state', 'motor', 'reference'):
+    required = ('state', 'motor', 'reference')
+    for key in required:
         if key not in cfg:
             raise ValueError(f"Missing topic configuration '{key}'")
+    for key in required:
         cfg[key] = str(cfg[key])
+    cfg['reference_path'] = str(cfg.get('reference_path', '/mpc_controller/reference_path'))
 
 
 def _coerce_node(cfg: Dict[str, Any]) -> None:
@@ -325,10 +328,16 @@ def apply_dynamic_configuration(params: Dict[str, Any], config: Any) -> Tuple[Di
                                          float(config.reference_velocity_z)]
     reference_cfg['default_yaw'] = float(config.reference_yaw)
 
+    try:
+        ref_path_topic = config.topic_reference_path
+    except Exception:
+        ref_path_topic = params.get('topics', {}).get('reference_path',
+                                                      '/mpc_controller/reference_path')
     topics_cfg = {
         'state': str(config.topic_state),
         'motor': str(config.topic_motor),
         'reference': str(config.topic_reference),
+        'reference_path': str(ref_path_topic),
     }
     params['topics'] = topics_cfg
 

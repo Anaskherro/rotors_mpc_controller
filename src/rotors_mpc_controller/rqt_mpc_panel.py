@@ -24,6 +24,8 @@ from std_srvs.srv import SetBool
 class VehicleState:
     position: tuple[float, float, float]
     orientation_rpy: tuple[float, float, float]
+    velocity: tuple[float, float, float]
+    acceleration: tuple[float, float, float]
 
 
 def quaternion_to_euler(x: float, y: float, z: float, w: float) -> tuple[float, float, float]:
@@ -93,7 +95,10 @@ class MPCControlPlugin(Plugin):
 
         self._position_labels = [QLabel('0.00', self._widget) for _ in range(3)]
         self._orientation_labels = [QLabel('0.00', self._widget) for _ in range(3)]
-        for lbl in self._position_labels + self._orientation_labels:
+        self._velocity_labels = [QLabel('0.00', self._widget) for _ in range(3)]
+        self._acceleration_labels = [QLabel('0.00', self._widget) for _ in range(3)]
+        for lbl in (self._position_labels + self._orientation_labels +
+                    self._velocity_labels + self._acceleration_labels):
             lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         self._status_label = QLabel('Waiting for data...', self._widget)
@@ -117,6 +122,8 @@ class MPCControlPlugin(Plugin):
         self._odom_topic_name: Optional[str] = None
         self._prepare_service_name: Optional[str] = None
         self._start_service_name: Optional[str] = None
+        self._last_velocity: Optional[tuple[float, float, float]] = None
+        self._last_velocity_stamp: Optional[rospy.Time] = None
 
         self._refresh_timer = QTimer(self._widget)
         self._refresh_timer.setInterval(200)
@@ -196,6 +203,16 @@ class MPCControlPlugin(Plugin):
             state_rpy_row.addWidget(lbl)
         state_layout.addRow('Roll / Pitch / Yaw [deg]', state_rpy_row)
 
+        state_vel_row = QHBoxLayout()
+        for lbl in self._velocity_labels:
+            state_vel_row.addWidget(lbl)
+        state_layout.addRow('Velocity [m/s]', state_vel_row)
+
+        state_acc_row = QHBoxLayout()
+        for lbl in self._acceleration_labels:
+            state_acc_row.addWidget(lbl)
+        state_layout.addRow('Acceleration [m/s^2]', state_acc_row)
+
         layout.addWidget(topic_box)
         layout.addWidget(input_box)
         layout.addWidget(state_box)
@@ -249,11 +266,26 @@ class MPCControlPlugin(Plugin):
                                                msg.pose.pose.orientation.y,
                                                msg.pose.pose.orientation.z,
                                                msg.pose.pose.orientation.w)
+        lin = msg.twist.twist.linear
+        velocity = (lin.x, lin.y, lin.z)
+
+        stamp = msg.header.stamp if msg.header.stamp != rospy.Time(0) else rospy.Time.now()
+        acceleration = (0.0, 0.0, 0.0)
+        if self._last_velocity is not None and self._last_velocity_stamp is not None:
+            dt = (stamp - self._last_velocity_stamp).to_sec()
+            if dt > 1e-6:
+                acceleration = tuple((v - prev) / dt for v, prev in zip(velocity, self._last_velocity))
+
+        self._last_velocity = velocity
+        self._last_velocity_stamp = stamp
+
         state = VehicleState(
             position=(msg.pose.pose.position.x,
                       msg.pose.pose.position.y,
                       msg.pose.pose.position.z),
             orientation_rpy=(roll, pitch, yaw),
+            velocity=velocity,
+            acceleration=acceleration,
         )
         with self._state_lock:
             self._latest_state = state
@@ -270,6 +302,12 @@ class MPCControlPlugin(Plugin):
         for lbl, value in zip(self._orientation_labels, state.orientation_rpy):
             degrees = math.degrees(value)
             lbl.setText(f'{degrees: .1f}')
+
+        for lbl, value in zip(self._velocity_labels, state.velocity):
+            lbl.setText(f'{value: .2f}')
+
+        for lbl, value in zip(self._acceleration_labels, state.acceleration):
+            lbl.setText(f'{value: .2f}')
 
     def _handle_publish(self) -> None:
         try:
@@ -359,6 +397,8 @@ class MPCControlPlugin(Plugin):
         self._start_client = None
         self._prepare_service_name = None
         self._start_service_name = None
+        self._last_velocity = None
+        self._last_velocity_stamp = None
 
     def save_settings(self, plugin_settings, instance_settings) -> None:
         instance_settings.set_value('frame_id', self._frame_id_input.text())
