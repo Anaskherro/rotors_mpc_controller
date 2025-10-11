@@ -89,6 +89,7 @@ class MPCControlPlugin(Plugin):
         self._publish_button = QPushButton('Publish Setpoint', self._widget)
         self._prepare_button = QPushButton('Prepare Trajectory', self._widget)
         self._start_button = QPushButton('Start Trajectory', self._widget)
+        self._stop_button = QPushButton('Stop Trajectory', self._widget)
 
         self._position_labels = [QLabel('0.00', self._widget) for _ in range(3)]
         self._orientation_labels = [QLabel('0.00', self._widget) for _ in range(3)]
@@ -121,6 +122,7 @@ class MPCControlPlugin(Plugin):
         self._publish_button.clicked.connect(self._handle_publish)
         self._prepare_button.clicked.connect(self._handle_prepare)
         self._start_button.clicked.connect(self._handle_start)
+        self._stop_button.clicked.connect(self._handle_stop)
 
         # Connections are established lazily to allow adjusting topics before publishing.
         self._connections_ready = False
@@ -172,6 +174,7 @@ class MPCControlPlugin(Plugin):
         button_row.addWidget(self._publish_button)
         button_row.addWidget(self._prepare_button)
         button_row.addWidget(self._start_button)
+        button_row.addWidget(self._stop_button)
         input_layout.addRow(button_row)
 
         state_box = QGroupBox('Current State', self._widget)
@@ -270,12 +273,15 @@ class MPCControlPlugin(Plugin):
         self._set_status('Setpoint published.', error=False)
 
     def _handle_prepare(self) -> None:
-        self._invoke_service('prepare', self._prepare_client)
+        self._invoke_service('prepare', self._prepare_client, True)
 
     def _handle_start(self) -> None:
-        self._invoke_service('start', self._start_client)
+        self._invoke_service('start', self._start_client, True)
 
-    def _invoke_service(self, label: str, client: Optional[rospy.ServiceProxy]) -> None:
+    def _handle_stop(self) -> None:
+        self._invoke_service('stop', self._start_client, False)
+
+    def _invoke_service(self, label: str, client: Optional[rospy.ServiceProxy], enable: bool) -> None:
         try:
             self._ensure_connections()
         except rospy.ROSException as exc:
@@ -287,7 +293,7 @@ class MPCControlPlugin(Plugin):
             return
 
         try:
-            response = client(True)
+            response = client(enable)
         except rospy.ServiceException as exc:
             self._set_status(f'{label.title()} call failed: {exc}', error=True)
             return
