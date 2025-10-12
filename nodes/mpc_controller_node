@@ -80,6 +80,7 @@ class MPCControllerNode:
                                                    Path, queue_size=1, latch=True)
         self._prediction_marker_pub = rospy.Publisher(self._topics.get('prediction_markers', '~prediction_markers'),
                                                       MarkerArray, queue_size=1, latch=True)
+        self._publish_prediction_markers(None)
 
         self._prepare_srv = rospy.Service('~prepare_trajectory', SetBool, self._prepare_service_cb)
         self._start_srv = rospy.Service('~start_trajectory', SetBool, self._start_service_cb)
@@ -128,6 +129,7 @@ class MPCControllerNode:
 
     def _loop(self, _: rospy.TimerEvent) -> None:
         if self._state is None:
+            self._publish_prediction_markers(None)
             return
 
         reference = self._reference.build_horizon(self._controller.horizon,
@@ -135,15 +137,17 @@ class MPCControllerNode:
 
         with self._controller_lock:
             thrust_cmd, status = self._controller.solve(self._state, reference)
+            latest_prediction = self._controller.get_last_prediction() if status == 0 else None
         if status != 0:
             rospy.logwarn_throttle(1.0, 'mpc_controller_node: solver returned status %d', status)
             if self._last_command is not None:
                 self._publish_command(self._last_command)
                 self._maybe_log(reference, thrust_cmd, status)
+            self._publish_prediction_markers(None)
             self._maybe_progress_trajectory()
             return
         self._publish_command(thrust_cmd)
-        self._publish_prediction_markers(self._controller.get_last_prediction())
+        self._publish_prediction_markers(latest_prediction)
         self._maybe_log(reference, thrust_cmd, status)
         self._maybe_progress_trajectory()
 
@@ -521,6 +525,10 @@ class MPCControllerNode:
         path_marker.color.g = 0.7
         path_marker.color.b = 0.9
         path_marker.color.a = 0.8
+        path_marker.pose.orientation.x = 0.0
+        path_marker.pose.orientation.y = 0.0
+        path_marker.pose.orientation.z = 0.0
+        path_marker.pose.orientation.w = 1.0
 
         for pos in positions:
             point = Point()
@@ -544,6 +552,10 @@ class MPCControllerNode:
             vector_marker.color.g = 0.3
             vector_marker.color.b = 0.1
             vector_marker.color.a = 0.7
+            vector_marker.pose.orientation.x = 0.0
+            vector_marker.pose.orientation.y = 0.0
+            vector_marker.pose.orientation.z = 0.0
+            vector_marker.pose.orientation.w = 1.0
 
             length_scale = max(dt, 0.01) * 1.5
             for pos, vel in zip(positions, velocities):
@@ -612,6 +624,10 @@ class MPCControllerNode:
                 axis_marker.color.g = float(color[1])
                 axis_marker.color.b = float(color[2])
                 axis_marker.color.a = 0.9
+                axis_marker.pose.orientation.x = 0.0
+                axis_marker.pose.orientation.y = 0.0
+                axis_marker.pose.orientation.z = 0.0
+                axis_marker.pose.orientation.w = 1.0
 
                 start = Point()
                 start.x = float(pos[0])
