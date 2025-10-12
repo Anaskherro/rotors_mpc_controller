@@ -79,14 +79,14 @@ Visualization Manager:
       Queue Size: 10
       Shape:
         Alpha: 1
-        Axes Length: 1
-        Axes Radius: 0.10000000149011612
+        Axes Length: 0.6000000238418579
+        Axes Radius: 0.07000000029802322
         Color: 255; 25; 0
         Head Length: 0.30000001192092896
         Head Radius: 0.10000000149011612
         Shaft Length: 0.3499999940395355
         Shaft Radius: 0.05000000074505806
-        Value: Arrow
+        Value: Axes
       Topic: /hummingbird/ground_truth/odometry
       Unreliable: false
       Value: true
@@ -138,6 +138,17 @@ Visualization Manager:
       Topic: /mpc_controller/reference_path
       Unreliable: false
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /mpc_controller/prediction_markers
+      Name: MarkerArray
+      Namespaces:
+        mpc_prediction: true
+        mpc_prediction_axis_x: true
+        mpc_prediction_axis_y: true
+        mpc_prediction_axis_z: true
+      Queue Size: 100
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -166,7 +177,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 15.50915241241455
+      Distance: 19.73822784423828
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
