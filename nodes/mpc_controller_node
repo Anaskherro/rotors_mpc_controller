@@ -531,9 +531,7 @@ class MPCControllerNode:
 
         marker_array.markers.append(path_marker)
 
-        if velocities is None or velocities.shape[0] != positions.shape[0]:
-            vector_marker = None
-        else:
+        if velocities is not None and velocities.shape[0] == positions.shape[0]:
             vector_marker = Marker()
             vector_marker.header.frame_id = frame_id
             vector_marker.header.stamp = stamp
@@ -563,38 +561,72 @@ class MPCControllerNode:
             marker_array.markers.append(vector_marker)
 
         axis_length = max(dt, 0.05) * 3.0
+        thickness = max(axis_length * 0.08, 0.01)
+
+        def _quat_to_rot(quat_arr: np.ndarray) -> np.ndarray:
+            norm = np.linalg.norm(quat_arr)
+            if norm == 0.0:
+                return np.eye(3, dtype=float)
+            w, x, y, z = quat_arr / norm
+            ww = w * w
+            xx = x * x
+            yy = y * y
+            zz = z * z
+            wx = w * x
+            wy = w * y
+            wz = w * z
+            xy = x * y
+            xz = x * z
+            yz = y * z
+            return np.array([
+                [ww + xx - yy - zz, 2.0 * (xy - wz),     2.0 * (xz + wy)],
+                [2.0 * (xy + wz),     ww - xx + yy - zz, 2.0 * (yz - wx)],
+                [2.0 * (xz - wy),     2.0 * (yz + wx),   ww - xx - yy + zz],
+            ], dtype=float)
+
         num_axes = positions.shape[0]
         for idx in range(num_axes):
             pos = positions[idx]
-            axis_marker = Marker()
-            axis_marker.header.frame_id = frame_id
-            axis_marker.header.stamp = stamp
-            axis_marker.ns = 'mpc_prediction_axes'
-            axis_marker.id = idx
-            axis_marker.type = Marker.AXES
-            axis_marker.action = Marker.ADD
-            axis_marker.pose.position.x = float(pos[0])
-            axis_marker.pose.position.y = float(pos[1])
-            axis_marker.pose.position.z = float(pos[2])
-
             if quaternions is not None and quaternions.shape[0] == positions.shape[0]:
-                quat = quaternions[idx]
-                axis_marker.pose.orientation.w = float(quat[0])
-                axis_marker.pose.orientation.x = float(quat[1])
-                axis_marker.pose.orientation.y = float(quat[2])
-                axis_marker.pose.orientation.z = float(quat[3])
+                rot = _quat_to_rot(quaternions[idx] / (np.linalg.norm(quaternions[idx]) + 1e-9))
             else:
-                axis_marker.pose.orientation.w = 1.0
-                axis_marker.pose.orientation.x = 0.0
-                axis_marker.pose.orientation.y = 0.0
-                axis_marker.pose.orientation.z = 0.0
+                rot = np.eye(3, dtype=float)
 
-            axis_marker.scale.x = axis_length
-            axis_marker.scale.y = axis_length
-            axis_marker.scale.z = axis_length
-            axis_marker.color.a = 1.0
+            axes = [
+                ('mpc_prediction_axis_x', idx * 3, np.array([1.0, 0.0, 0.0]), (1.0, 0.1, 0.1)),
+                ('mpc_prediction_axis_y', idx * 3 + 1, np.array([0.0, 1.0, 0.0]), (0.1, 1.0, 0.1)),
+                ('mpc_prediction_axis_z', idx * 3 + 2, np.array([0.0, 0.0, 1.0]), (0.1, 0.2, 1.0)),
+            ]
+            for ns, marker_id, axis_vec, color in axes:
+                axis_marker = Marker()
+                axis_marker.header.frame_id = frame_id
+                axis_marker.header.stamp = stamp
+                axis_marker.ns = ns
+                axis_marker.id = marker_id
+                axis_marker.type = Marker.ARROW
+                axis_marker.action = Marker.ADD
+                axis_marker.scale.x = thickness
+                axis_marker.scale.y = thickness * 1.6
+                axis_marker.scale.z = thickness * 1.6
+                axis_marker.color.r = float(color[0])
+                axis_marker.color.g = float(color[1])
+                axis_marker.color.b = float(color[2])
+                axis_marker.color.a = 0.9
 
-            marker_array.markers.append(axis_marker)
+                start = Point()
+                start.x = float(pos[0])
+                start.y = float(pos[1])
+                start.z = float(pos[2])
+
+                direction = rot @ axis_vec
+                end = Point()
+                end.x = float(pos[0] + direction[0] * axis_length)
+                end.y = float(pos[1] + direction[1] * axis_length)
+                end.z = float(pos[2] + direction[2] * axis_length)
+
+                axis_marker.points.append(start)
+                axis_marker.points.append(end)
+                marker_array.markers.append(axis_marker)
 
         self._prediction_marker_pub.publish(marker_array)
 
