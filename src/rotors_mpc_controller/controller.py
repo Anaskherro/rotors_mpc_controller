@@ -461,3 +461,29 @@ class PositionNMPC:
         self._prev_solution_valid = True
 
         return u0, status
+
+    # ------------------------------------------------------------------
+    def get_last_prediction(self) -> Dict[str, np.ndarray] | None:
+        """Return the most recent state/input trajectories if available."""
+        if not self._prev_solution_valid or self._prev_solution is None:
+            return None
+
+        x_traj = np.asarray(self._prev_solution.get('x'))
+        u_traj = np.asarray(self._prev_solution.get('u'))
+        if x_traj.size == 0:
+            return None
+
+        positions = x_traj[:, 0:3]
+        velocities = x_traj[:, 3:6]
+        quaternions = x_traj[:, 6:10]
+        rates = x_traj[:, 10:13]
+
+        return {
+            'states': x_traj.copy(),
+            'inputs': u_traj.copy(),
+            'positions': positions.copy(),
+            'velocities': velocities.copy(),
+            'quaternions': quaternions.copy(),
+            'body_rates': rates.copy(),
+            'dt': float(self.dt),
+        }

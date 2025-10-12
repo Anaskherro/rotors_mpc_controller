@@ -200,6 +200,7 @@ def _coerce_topics(cfg: Dict[str, Any]) -> None:
     for key in required:
         cfg[key] = str(cfg[key])
     cfg['reference_path'] = str(cfg.get('reference_path', '/mpc_controller/reference_path'))
+    cfg['prediction_markers'] = str(cfg.get('prediction_markers', '/mpc_controller/prediction_markers'))
 
 
 def _coerce_node(cfg: Dict[str, Any]) -> None:
@@ -333,11 +334,17 @@ def apply_dynamic_configuration(params: Dict[str, Any], config: Any) -> Tuple[Di
     except Exception:
         ref_path_topic = params.get('topics', {}).get('reference_path',
                                                       '/mpc_controller/reference_path')
+    try:
+        pred_marker_topic = config.topic_prediction_markers
+    except Exception:
+        pred_marker_topic = params.get('topics', {}).get('prediction_markers',
+                                                         '/mpc_controller/prediction_markers')
     topics_cfg = {
         'state': str(config.topic_state),
         'motor': str(config.topic_motor),
         'reference': str(config.topic_reference),
         'reference_path': str(ref_path_topic),
+        'prediction_markers': str(pred_marker_topic),
     }
     params['topics'] = topics_cfg
 

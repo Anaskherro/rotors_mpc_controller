@@ -20,6 +20,7 @@
   <depend>rqt_gui</depend>
   <depend>rqt_gui_py</depend>
   <depend>python_qt_binding</depend>
+  <depend>visualization_msgs</depend>
 
   <export>
     <rqt_gui plugin="${prefix}/resource/mpc_control_plugin.xml"/>

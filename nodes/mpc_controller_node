@@ -11,9 +11,10 @@ from typing import Optional
 import numpy as np
 import rospy
 from dynamic_reconfigure.server import Server
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Point
 from mav_msgs.msg import Actuators
 from nav_msgs.msg import Odometry, Path
+from visualization_msgs.msg import Marker, MarkerArray
 from std_srvs.srv import SetBool, SetBoolRequest, SetBoolResponse
 
 from rotors_mpc_controller import (PositionNMPC, ReferenceGenerator,
@@ -77,6 +78,8 @@ class MPCControllerNode:
                                                self._reference_cb, queue_size=1)
         self._reference_path_pub = rospy.Publisher(self._topics.get('reference_path', '~reference_path'),
                                                    Path, queue_size=1, latch=True)
+        self._prediction_marker_pub = rospy.Publisher(self._topics.get('prediction_markers', '~prediction_markers'),
+                                                      MarkerArray, queue_size=1, latch=True)
 
         self._prepare_srv = rospy.Service('~prepare_trajectory', SetBool, self._prepare_service_cb)
         self._start_srv = rospy.Service('~start_trajectory', SetBool, self._start_service_cb)
@@ -140,6 +143,7 @@ class MPCControllerNode:
             self._maybe_progress_trajectory()
             return
         self._publish_command(thrust_cmd)
+        self._publish_prediction_markers(self._controller.get_last_prediction())
         self._maybe_log(reference, thrust_cmd, status)
         self._maybe_progress_trajectory()
 
@@ -233,6 +237,8 @@ class MPCControllerNode:
                     self._motor_pub.unregister()
                 if getattr(self, '_reference_path_pub', None) is not None:
                     self._reference_path_pub.unregister()
+                if getattr(self, '_prediction_marker_pub', None) is not None:
+                    self._prediction_marker_pub.unregister()
                 self._topics = dict(topics_cfg)
                 self._motor_pub = rospy.Publisher(self._topics['motor'], Actuators, queue_size=1)
                 self._state_sub = rospy.Subscriber(self._topics['state'], Odometry,
@@ -242,6 +248,8 @@ class MPCControllerNode:
                                                        self._reference_cb, queue_size=1)
                 self._reference_path_pub = rospy.Publisher(self._topics.get('reference_path', '~reference_path'),
                                                            Path, queue_size=1, latch=True)
+                self._prediction_marker_pub = rospy.Publisher(self._topics.get('prediction_markers', '~prediction_markers'),
+                                                              MarkerArray, queue_size=1, latch=True)
                 traj_data = None
                 if self._pending_trajectory is not None:
                     traj_data = self._pending_trajectory.get('data')
@@ -251,6 +259,7 @@ class MPCControllerNode:
                                                  traj_data.get('times'))
                 else:
                     self._publish_reference_path(None)
+                self._publish_prediction_markers(self._controller.get_last_prediction())
 
             new_rate = node_meta['rate']
             if new_rate > 0.0 and not math.isclose(new_rate, self._rate_hz):
@@ -467,6 +476,127 @@ class MPCControllerNode:
                 path_msg.poses.append(pose)
 
         self._reference_path_pub.publish(path_msg)
+
+    def _publish_prediction_markers(self, prediction: dict | None) -> None:
+        if self._prediction_marker_pub is None:
+            return
+
+        frame_id = self._params['reference'].get('frame', 'world')
+        stamp = rospy.Time.now()
+
+        marker_array = MarkerArray()
+
+        if not prediction or 'positions' not in prediction:
+            clear_marker = Marker()
+            clear_marker.header.frame_id = frame_id
+            clear_marker.header.stamp = stamp
+            clear_marker.action = Marker.DELETEALL
+            marker_array.markers.append(clear_marker)
+            self._prediction_marker_pub.publish(marker_array)
+            return
+
+        positions = np.asarray(prediction.get('positions'))
+        velocities = np.asarray(prediction.get('velocities')) if prediction.get('velocities') is not None else None
+        quaternions = np.asarray(prediction.get('quaternions')) if prediction.get('quaternions') is not None else None
+        dt = float(prediction.get('dt', self._controller.dt))
+
+        if positions.size == 0:
+            clear_marker = Marker()
+            clear_marker.header.frame_id = frame_id
+            clear_marker.header.stamp = stamp
+            clear_marker.action = Marker.DELETEALL
+            marker_array.markers.append(clear_marker)
+            self._prediction_marker_pub.publish(marker_array)
+            return
+
+        path_marker = Marker()
+        path_marker.header.frame_id = frame_id
+        path_marker.header.stamp = stamp
+        path_marker.ns = 'mpc_prediction'
+        path_marker.id = 0
+        path_marker.type = Marker.LINE_STRIP
+        path_marker.action = Marker.ADD
+        path_marker.scale.x = 0.05
+        path_marker.color.r = 0.1
+        path_marker.color.g = 0.7
+        path_marker.color.b = 0.9
+        path_marker.color.a = 0.8
+
+        for pos in positions:
+            point = Point()
+            point.x = float(pos[0])
+            point.y = float(pos[1])
+            point.z = float(pos[2])
+            path_marker.points.append(point)
+
+        marker_array.markers.append(path_marker)
+
+        if velocities is None or velocities.shape[0] != positions.shape[0]:
+            vector_marker = None
+        else:
+            vector_marker = Marker()
+            vector_marker.header.frame_id = frame_id
+            vector_marker.header.stamp = stamp
+            vector_marker.ns = 'mpc_prediction'
+            vector_marker.id = 1
+            vector_marker.type = Marker.LINE_LIST
+            vector_marker.action = Marker.ADD
+            vector_marker.scale.x = 0.04
+            vector_marker.color.r = 1.0
+            vector_marker.color.g = 0.3
+            vector_marker.color.b = 0.1
+            vector_marker.color.a = 0.7
+
+            length_scale = max(dt, 0.01) * 1.5
+            for pos, vel in zip(positions, velocities):
+                start = Point()
+                start.x = float(pos[0])
+                start.y = float(pos[1])
+                start.z = float(pos[2])
+                end = Point()
+                end.x = float(pos[0] + vel[0] * length_scale)
+                end.y = float(pos[1] + vel[1] * length_scale)
+                end.z = float(pos[2] + vel[2] * length_scale)
+                vector_marker.points.append(start)
+                vector_marker.points.append(end)
+
+            marker_array.markers.append(vector_marker)
+
+        axis_length = max(dt, 0.05) * 3.0
+        num_axes = positions.shape[0]
+        for idx in range(num_axes):
+            pos = positions[idx]
+            axis_marker = Marker()
+            axis_marker.header.frame_id = frame_id
+            axis_marker.header.stamp = stamp
+            axis_marker.ns = 'mpc_prediction_axes'
+            axis_marker.id = idx
+            axis_marker.type = Marker.AXES
+            axis_marker.action = Marker.ADD
+            axis_marker.pose.position.x = float(pos[0])
+            axis_marker.pose.position.y = float(pos[1])
+            axis_marker.pose.position.z = float(pos[2])
+
+            if quaternions is not None and quaternions.shape[0] == positions.shape[0]:
+                quat = quaternions[idx]
+                axis_marker.pose.orientation.w = float(quat[0])
+                axis_marker.pose.orientation.x = float(quat[1])
+                axis_marker.pose.orientation.y = float(quat[2])
+                axis_marker.pose.orientation.z = float(quat[3])
+            else:
+                axis_marker.pose.orientation.w = 1.0
+                axis_marker.pose.orientation.x = 0.0
+                axis_marker.pose.orientation.y = 0.0
+                axis_marker.pose.orientation.z = 0.0
+
+            axis_marker.scale.x = axis_length
+            axis_marker.scale.y = axis_length
+            axis_marker.scale.z = axis_length
+            axis_marker.color.a = 1.0
+
+            marker_array.markers.append(axis_marker)
+
+        self._prediction_marker_pub.publish(marker_array)
 
     def _activate_pending_trajectory(self) -> None:
         if self._pending_trajectory is None:
