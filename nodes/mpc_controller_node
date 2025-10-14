@@ -147,11 +147,13 @@ class MPCControllerNode:
                 self._maybe_log(reference, thrust_cmd, status)
             self._publish_prediction_markers(None)
             self._maybe_progress_trajectory()
+            self._maybe_finish_trajectory()
             return
         self._publish_command(thrust_cmd)
         self._publish_prediction_markers(latest_prediction)
         self._maybe_log(reference, thrust_cmd, status)
         self._maybe_progress_trajectory()
+        self._maybe_finish_trajectory()
 
     @staticmethod
     def _yaw_from_quaternion(qx: float, qy: float, qz: float, qw: float) -> float:
@@ -381,6 +383,8 @@ class MPCControllerNode:
         loop = bool(traj_cfg.get('loop', True))
         traj_type = str(traj_cfg.get('type', 'circle')).lower()
         start_tol = float(traj_cfg.get('start_position_tolerance', 0.15))
+        stop_tol = float(traj_cfg.get('stop_position_tolerance', start_tol))
+        stop_vel_tol = float(traj_cfg.get('stop_velocity_tolerance', 0.3))
 
         trajectory_data: dict[str, np.ndarray] | None = None
 
@@ -403,14 +407,25 @@ class MPCControllerNode:
             rospy.logwarn('mpc_controller_node: trajectory generation returned empty positions.')
             return
 
+        velocities_arr = trajectory_data.get('velocities')
+        if isinstance(velocities_arr, np.ndarray) and velocities_arr.shape[-1] == 3:
+            final_velocity = velocities_arr[-1].copy()
+        else:
+            final_velocity = np.zeros(3)
+
         self._pending_trajectory = {
             'data': trajectory_data,
             'dt': float(trajectory_data.get('dt', dt)),
             'loop': loop,
             'type': traj_type,
             'start_tolerance': start_tol,
+            'stop_tolerance': stop_tol,
+            'stop_velocity_tolerance': stop_vel_tol,
             'start_yaw': float(trajectory_data['yaws'][0]) if trajectory_data['yaws'].size else None,
             'positions': positions,
+            'final_position': positions[-1].copy(),
+            'final_yaw': float(trajectory_data['yaws'][-1]) if trajectory_data['yaws'].size else None,
+            'final_velocity': final_velocity,
         }
 
         if self._pending_trajectory['start_yaw'] is None:
@@ -681,7 +696,7 @@ class MPCControllerNode:
         self._approach_target = None
         rospy.loginfo('mpc_controller_node: trajectory following enabled.')
 
-    def _deactivate_trajectory(self) -> None:
+    def _deactivate_trajectory(self, final_target: dict | None = None) -> None:
         if self._trajectory_stage == 'idle' and not self._trajectory_active:
             rospy.loginfo('mpc_controller_node: trajectory already inactive.')
             return
@@ -693,31 +708,38 @@ class MPCControllerNode:
                                        velocity=self._state['velocity'],
                                        yaw=yaw_current,
                                        quaternion=quat,
-                                       body_rates=self._state['body_rates'],
-                                       thrust=self._last_command if self._last_command is not None else None,
-                                       reset_trajectory=True)
+                                      body_rates=self._state['body_rates'],
+                                      thrust=self._last_command if self._last_command is not None else None,
+                                      reset_trajectory=True)
         else:
             self._reference.clear_trajectory()
 
         ref_cfg = self._params.get('reference', {})
-        hover_pos = np.asarray(ref_cfg.get('default_position', [0.0, 0.0, 1.0]), dtype=float)
-        hover_vel = np.asarray(ref_cfg.get('default_velocity', [0.0, 0.0, 0.0]), dtype=float)
-        hover_yaw = float(ref_cfg.get('default_yaw', 0.0))
+        default_pos = np.asarray(ref_cfg.get('default_position', [0.0, 0.0, 1.0]), dtype=float)
+        default_vel = np.asarray(ref_cfg.get('default_velocity', [0.0, 0.0, 0.0]), dtype=float)
+        default_yaw = float(ref_cfg.get('default_yaw', 0.0))
 
-        self._reference.set_target(position=hover_pos,
-                                   velocity=hover_vel,
-                                   yaw=hover_yaw)
-        hover_traj = self._reference.get_active_trajectory()
-        if isinstance(hover_traj, dict):
-            self._publish_reference_path(hover_traj.get('positions'),
-                                         hover_traj.get('quaternions'))
+        target_pos = np.asarray(final_target.get('position', default_pos), dtype=float) if final_target else default_pos
+        target_vel = np.asarray(final_target.get('velocity', default_vel), dtype=float) if final_target else default_vel
+        target_yaw = float(final_target.get('yaw', default_yaw)) if final_target and 'yaw' in final_target else default_yaw
+
+        self._reference.set_target(position=target_pos,
+                                   velocity=target_vel,
+                                   yaw=target_yaw)
+        target_traj = self._reference.get_active_trajectory()
+        if isinstance(target_traj, dict):
+            self._publish_reference_path(target_traj.get('positions'),
+                                         target_traj.get('quaternions'))
         else:
             self._publish_reference_path(None)
 
         self._trajectory_active = False
         self._trajectory_stage = 'idle'
         self._approach_target = None
-        rospy.loginfo('mpc_controller_node: trajectory control aborted; holding hover.')
+        if final_target is not None:
+            rospy.loginfo('mpc_controller_node: trajectory control inactive; holding final target.')
+        else:
+            rospy.loginfo('mpc_controller_node: trajectory control aborted; holding hover.')
 
     def _prepare_service_cb(self, req: SetBoolRequest) -> SetBoolResponse:
         if req.data:
@@ -807,6 +829,51 @@ class MPCControllerNode:
         if self._trajectory_stage != 'ready':
             self._trajectory_stage = 'ready'
             rospy.loginfo('mpc_controller_node: start point reached; call ~start_trajectory to begin tracking.')
+
+    def _maybe_finish_trajectory(self) -> None:
+        if not self._trajectory_active:
+            return
+        if self._pending_trajectory is None:
+            return
+        if bool(self._pending_trajectory.get('loop', False)):
+            return
+        if self._trajectory_stage != 'track':
+            return
+        if not getattr(self._reference, 'trajectory_complete', lambda: False)():
+            return
+        if self._state is None:
+            return
+
+        final_pos = self._pending_trajectory.get('final_position')
+        if final_pos is None:
+            return
+        final_pos = np.asarray(final_pos, dtype=float)
+        if final_pos.shape != (3,):
+            return
+        tolerance = float(self._pending_trajectory.get('stop_tolerance', 0.2))
+        distance = float(np.linalg.norm(self._state['position'] - final_pos))
+        if distance > tolerance:
+            return
+
+        velocity = self._state['velocity']
+        vel_tol = float(self._pending_trajectory.get('stop_velocity_tolerance', 0.3))
+        if float(np.linalg.norm(velocity)) > vel_tol:
+            return
+
+        final_target: dict[str, object] = {
+            'position': final_pos.copy(),
+        }
+        final_velocity = self._pending_trajectory.get('final_velocity')
+        if isinstance(final_velocity, np.ndarray) and final_velocity.shape == (3,):
+            final_target['velocity'] = final_velocity.copy()
+        else:
+            final_target['velocity'] = np.zeros(3)
+        final_yaw = self._pending_trajectory.get('final_yaw')
+        if final_yaw is not None:
+            final_target['yaw'] = float(final_yaw)
+
+        rospy.loginfo('mpc_controller_node: trajectory completed within tolerance; holding final waypoint.')
+        self._deactivate_trajectory(final_target)
 
 
 def main() -> None:

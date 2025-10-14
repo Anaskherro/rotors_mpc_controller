@@ -177,6 +177,11 @@ def _coerce_reference(cfg: Dict[str, Any]) -> None:
             traj['start_position_tolerance'] = float(traj['start_position_tolerance'])
         else:
             traj['start_position_tolerance'] = 0.15
+        if 'stop_position_tolerance' in traj:
+            traj['stop_position_tolerance'] = float(traj['stop_position_tolerance'])
+        else:
+            traj['stop_position_tolerance'] = traj['start_position_tolerance']
+        traj['stop_velocity_tolerance'] = float(traj.get('stop_velocity_tolerance', 0.3))
         if 'center' in traj:
             center = traj['center']
             if not isinstance(center, (list, tuple)) or len(center) != 2:

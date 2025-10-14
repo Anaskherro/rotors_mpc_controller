@@ -54,6 +54,8 @@ reference:
     yaw_constant: 0.0
     yaw_offset: 0.0
     dt: 0.05
+    stop_position_tolerance: 0.01
+    stop_velocity_tolerance: 0.02
     # For lemniscate trajectories:
     # inner_radius: 2.0
     # outer_radius: 3.0
