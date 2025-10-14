@@ -56,6 +56,15 @@ reference:
     dt: 0.03
     # Call ~prepare_trajectory first to move to the start point, then ~start_trajectory to begin tracking.
     start_position_tolerance: 0.15
+  transition:
+    enabled: true
+    dt: 0.05
+    max_speed: 1.0
+    max_acceleration: 0.75
+    max_yaw_rate: 1.0
+    distance_epsilon: 0.02
+    yaw_mode: interpolate
+    min_duration: 0.0
 
 topics:
   state: /hummingbird/ground_truth/odometry
