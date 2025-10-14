@@ -191,6 +191,24 @@ def _coerce_reference(cfg: Dict[str, Any]) -> None:
     else:
         cfg['trajectory'] = None
 
+    transition_cfg = cfg.get('transition', {})
+    if isinstance(transition_cfg, dict):
+        trans = dict(transition_cfg)
+    else:
+        trans = {}
+    trans['enabled'] = bool(trans.get('enabled', True))
+    trans['dt'] = float(trans.get('dt', 0.05))
+    trans['max_speed'] = float(trans.get('max_speed', 1.0))
+    trans['max_acceleration'] = float(trans.get('max_acceleration', 0.75))
+    trans['distance_epsilon'] = float(trans.get('distance_epsilon', 0.02))
+    trans['max_yaw_rate'] = float(trans.get('max_yaw_rate', 1.0))
+    trans['min_duration'] = float(trans.get('min_duration', 0.0))
+    yaw_mode = str(trans.get('yaw_mode', 'interpolate')).lower()
+    if yaw_mode not in {'interpolate', 'hold'}:
+        raise ValueError("reference.transition.yaw_mode must be 'interpolate' or 'hold'.")
+    trans['yaw_mode'] = yaw_mode
+    cfg['transition'] = trans
+
 
 def _coerce_topics(cfg: Dict[str, Any]) -> None:
     required = ('state', 'motor', 'reference')
