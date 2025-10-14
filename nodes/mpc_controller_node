@@ -673,15 +673,35 @@ class MPCControllerNode:
         if self._trajectory_stage == 'idle' and not self._trajectory_active:
             rospy.loginfo('mpc_controller_node: trajectory already inactive.')
             return
-        self._reference.clear_trajectory()
+
         if self._state is not None:
-            yaw = self._yaw_from_quaternion(self._state['quaternion'][1],
-                                            self._state['quaternion'][2],
-                                            self._state['quaternion'][3],
-                                            self._state['quaternion'][0])
-            self._reference.set_target(position=self._state['position'],
-                                       velocity=np.zeros(3),
-                                       yaw=yaw)
+            quat = self._state['quaternion']
+            yaw_current = self._yaw_from_quaternion(quat[1], quat[2], quat[3], quat[0])
+            self._reference.sync_state(position=self._state['position'],
+                                       velocity=self._state['velocity'],
+                                       yaw=yaw_current,
+                                       quaternion=quat,
+                                       body_rates=self._state['body_rates'],
+                                       thrust=self._last_command if self._last_command is not None else None,
+                                       reset_trajectory=True)
+        else:
+            self._reference.clear_trajectory()
+
+        ref_cfg = self._params.get('reference', {})
+        hover_pos = np.asarray(ref_cfg.get('default_position', [0.0, 0.0, 1.0]), dtype=float)
+        hover_vel = np.asarray(ref_cfg.get('default_velocity', [0.0, 0.0, 0.0]), dtype=float)
+        hover_yaw = float(ref_cfg.get('default_yaw', 0.0))
+
+        self._reference.set_target(position=hover_pos,
+                                   velocity=hover_vel,
+                                   yaw=hover_yaw)
+        hover_traj = self._reference.get_active_trajectory()
+        if isinstance(hover_traj, dict):
+            self._publish_reference_path(hover_traj.get('positions'),
+                                         hover_traj.get('quaternions'))
+        else:
+            self._publish_reference_path(None)
+
         self._trajectory_active = False
         self._trajectory_stage = 'idle'
         self._approach_target = None
