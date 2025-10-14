@@ -51,6 +51,42 @@ class ReferenceGenerator:
         self._transition_max_yaw_rate = max(float(transition_cfg.get('max_yaw_rate', 1.0)), 1e-3)
         self._transition_min_duration = max(float(transition_cfg.get('min_duration', 0.0)), 0.0)
 
+    def sync_state(self,
+                   position: np.ndarray,
+                   velocity: np.ndarray | None = None,
+                   yaw: float | None = None,
+                   quaternion: np.ndarray | None = None,
+                   body_rates: np.ndarray | None = None,
+                   thrust: np.ndarray | None = None,
+                   *,
+                   reset_trajectory: bool = False) -> None:
+        """Synchronise the generator with an observed vehicle state without triggering new transitions."""
+        pos_arr = np.asarray(position, dtype=float).reshape(3)
+        vel_arr = np.asarray(velocity, dtype=float).reshape(3) if velocity is not None else None
+        quat_arr = np.asarray(quaternion, dtype=float).reshape(4) if quaternion is not None else None
+        rate_arr = np.asarray(body_rates, dtype=float).reshape(3) if body_rates is not None else None
+        thrust_arr = np.asarray(thrust, dtype=float).reshape(-1) if thrust is not None else None
+
+        with self._lock:
+            self._position = pos_arr
+            if vel_arr is not None:
+                self._velocity = vel_arr
+            if quat_arr is not None:
+                norm = np.linalg.norm(quat_arr)
+                self._quaternion = quat_arr / norm if norm > 0.0 else _quat_from_yaw(0.0)
+                self._yaw = float(yaw) if yaw is not None else _yaw_from_quat(self._quaternion)
+            elif yaw is not None:
+                self._yaw = float(yaw)
+                self._quaternion = _quat_from_yaw(self._yaw)
+            if rate_arr is not None:
+                self._body_rates = rate_arr
+            if thrust_arr is not None and thrust_arr.size == 4:
+                self._thrust = thrust_arr.astype(float, copy=True)
+            if reset_trajectory:
+                self._trajectory = None
+                self._traj_index = 0
+                self._traj_loop = False
+
     def _reference_snapshot_locked(self) -> Dict[str, np.ndarray]:
         if self._trajectory is not None:
             traj = self._trajectory
@@ -217,6 +253,13 @@ class ReferenceGenerator:
             'thrusts': thrusts,
             'loop': False,
         }
+
+    def get_active_trajectory(self) -> Dict[str, np.ndarray] | None:
+        with self._lock:
+            if self._trajectory is None:
+                return None
+            return {key: np.asarray(value, dtype=float).copy()
+                    for key, value in self._trajectory.items()}
 
     def set_target(self,
                    position: np.ndarray,

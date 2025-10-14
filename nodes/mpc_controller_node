@@ -721,7 +721,20 @@ class MPCControllerNode:
         data = self._pending_trajectory['data']
         start_pos = np.array(data['positions'][0], dtype=float)
         start_yaw = self._pending_trajectory.get('start_yaw')
-        self._reference.clear_trajectory()
+        if self._state is not None:
+            state_quat = self._state['quaternion']
+            state_yaw = self._yaw_from_quaternion(state_quat[1],
+                                                  state_quat[2],
+                                                  state_quat[3],
+                                                  state_quat[0])
+            self._reference.sync_state(position=self._state['position'],
+                                       velocity=self._state['velocity'],
+                                       yaw=state_yaw,
+                                       quaternion=state_quat,
+                                       body_rates=self._state['body_rates'],
+                                       reset_trajectory=True)
+        else:
+            self._reference.clear_trajectory()
         kwargs: dict[str, object] = {
             'position': start_pos,
             'velocity': np.zeros(3),
@@ -729,6 +742,10 @@ class MPCControllerNode:
         if start_yaw is not None:
             kwargs['yaw'] = float(start_yaw)
         self._reference.set_target(**kwargs)
+        approach_traj = self._reference.get_active_trajectory()
+        if isinstance(approach_traj, dict):
+            self._publish_reference_path(approach_traj.get('positions'),
+                                         approach_traj.get('quaternions'))
         self._trajectory_stage = 'approach'
         self._trajectory_active = False
         self._approach_target = {
