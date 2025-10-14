@@ -9,6 +9,7 @@ The package targets ROS Noetic on Ubuntu 20.04 and has been tested against the R
 - Rotor-level NMPC solved with acados and CasADi using a 13-state quadrotor model.
 - Direct mapping from solver outputs to rotor speeds with saturation handling.
 - Warm-start caching with fail-safe reuse of the last valid command.
+- Built-in point-to-point transition planner that smooths ad-hoc setpoint changes with trapezoidal speed/yaw profiles.
 - Periodic logging of the internal NMPC state, references, and final thrust commands.
 - Configurable parameters via YAML for solver weights, vehicle properties, and thrust limits.
 - Live tuning through `dynamic_reconfigure` (`rqt_reconfigure`) with automatic acados solver regeneration whenever solver parameters change.
@@ -76,7 +77,7 @@ This launch file will:
 3. Launch `mpc_controller_node`, which now maps solver thrusts directly to motor speeds.
 4. Start RViz with the bundled configuration (`config/rotors_mpc.rviz`) and a `path_publisher_node` that traces the actual vehicle path on `/path`.
 
-You can command a new setpoint by publishing a `geometry_msgs/PoseStamped` to `/mpc_controller/setpoint`. Example:
+You can command a new setpoint by publishing a `geometry_msgs/PoseStamped` to `/mpc_controller/setpoint`. The reference generator now bridges from the current hover/trajectory to the requested pose using the built-in transition planner (configurable or disable-able under `reference.transition`). Example:
 
 ```bash
 rostopic pub /mpc_controller/setpoint geometry_msgs/PoseStamped "header: {frame_id: world}
@@ -91,6 +92,7 @@ All runtime parameters live in [`config/params.yaml`](config/params.yaml). Key s
 - `vehicle`: mass, inertia, arm length, rotor constants, motor speed limits.
 - `controller`: rotor thrust limits.
 - `reference`: default hold position/velocity/yaw plus optional trajectory staging.
+- `reference.transition`: trapezoidal point-to-point planner that smooths manual setpoint changes (dt, max speed/acceleration, yaw behaviour).
 - `topics`: ROS topic names for state, motor speeds, and setpoint input.
 - `node`: execution rate and logging interval.
 
@@ -100,7 +102,8 @@ Shipped defaults (also pre-populated in `rqt_reconfigure`) now match the tuned r
 - Position weights `[10, 10, 8]`, velocity weights `[1, 1, 0.2]`, quaternion weights `[3.2 × 4]`, rate weights `[1.4, 1.4, 0.4]`.
 - Control penalty `1.75` per rotor and terminal weights `[5, 5, 3, 2, 2, 2, 12, 12, 12, 18.5, 2, 2, 1.8]`.
 - Thrust window `[0, 20]` N per motor; the default reference holds the vehicle at `(0, 0, 2.5)` with zero velocity.
-- Trajectory defaults: 1 m radius, 1 m altitude circular path centred at `(1, 1)` and sampled at 50 Hz. Adjust `start_position_tolerance` to control how close the preparation stage must get before you start tracking.
+- Trajectory defaults: 3 m radius, 1 m altitude circular path centred at `(0, 0)`, clockwise direction, `max_speed = 0.2 m/s`, `linear_acceleration = 0.1 m/s²`, sampled at 20 Hz (`dt = 0.05`). Adjust `start_position_tolerance` to control how close the preparation stage must get before you start tracking.
+- Transition planner defaults: enabled with `dt = 0.05`, `max_speed = 1.0 m/s`, `max_acceleration = 0.75 m/s²`, `max_yaw_rate = 1.0 rad/s`, `yaw_mode = interpolate`, and `distance_epsilon = 0.02 m`. Set `enabled: false` if you prefer the legacy “jump” behaviour for manual setpoints.
 
 `reference.trajectory` accepts two execution profiles:
 
@@ -120,6 +123,7 @@ rosrun rqt_reconfigure rqt_reconfigure
 ```
 
 Select the `rotors_mpc_controller` namespace and tweak the sliders. Solver-related changes regenerate the acados model instantly, while other entries update the running controller without a restart. The `solver_horizon_steps` and `solver_iter_max` sliders now span up to 600 to simplify large-horizon experiments.
+The transition planner parameters live under the `reference` group, letting you adjust ramp speed, acceleration, yaw mode, or disable the planner on the fly.
 
 ## Logging and debugging
 
