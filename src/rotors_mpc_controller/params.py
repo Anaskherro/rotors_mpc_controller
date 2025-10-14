@@ -138,6 +138,7 @@ def _coerce_reference(cfg: Dict[str, Any]) -> None:
         traj = dict(traj_cfg)
         traj['enabled'] = bool(traj.get('enabled', False))
         traj['type'] = str(traj.get('type', 'circle'))
+        traj_type = traj['type'].lower()
         traj['loop'] = bool(traj.get('loop', True))
         traj['yaw_mode'] = str(traj.get('yaw_mode', 'follow')).lower()
         if traj['yaw_mode'] not in {'follow', 'fixed'}:
@@ -151,6 +152,12 @@ def _coerce_reference(cfg: Dict[str, Any]) -> None:
             traj['altitude'] = float(traj['altitude'])
         else:
             traj['altitude'] = cfg['default_position'][2]
+        if traj_type == 'helical':
+            traj['pitch'] = float(traj.get('pitch', 0.5))
+            traj['turns'] = float(traj.get('turns', 3.0))
+        if traj_type == 'lemniscate':
+            traj['inner_radius'] = float(traj.get('inner_radius', traj.get('radius', 2.0)))
+            traj['outer_radius'] = float(traj.get('outer_radius', traj.get('radius', 3.0)))
         if 'revolutions' in traj:
             traj['revolutions'] = float(traj['revolutions'])
         else:

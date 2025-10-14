@@ -13,7 +13,7 @@ The package targets ROS Noetic on Ubuntu 20.04 and has been tested against the R
 - Periodic logging of the internal NMPC state, references, and final thrust commands.
 - Configurable parameters via YAML for solver weights, vehicle properties, and thrust limits.
 - Live tuning through `dynamic_reconfigure` (`rqt_reconfigure`) with automatic acados solver regeneration whenever solver parameters change.
-- Minimum-snap trajectory generator (continuous or approach/stop profiles) inspired by data_driven_mpc, including feed-forward thrust and yaw references.
+- Minimum-snap trajectory generator (continuous or approach/stop profiles) inspired by data_driven_mpc, now supporting circular, lemniscate (figure-eight), and helical paths with feed-forward thrust and yaw references.
 - RViz visualisation of the flown path via a lightweight path publisher node and bundled display configuration.
 - Gazebo launch integration that spawns the RotorS hummingbird and the NMPC node.
 
@@ -91,7 +91,7 @@ All runtime parameters live in [`config/params.yaml`](config/params.yaml). Key s
 - `solver`: NMPC horizon, discretization, quadratic weights, and regularisation.
 - `vehicle`: mass, inertia, arm length, rotor constants, motor speed limits.
 - `controller`: rotor thrust limits.
-- `reference`: default hold position/velocity/yaw plus optional trajectory staging.
+- `reference`: default hold position/velocity/yaw plus optional trajectory staging (`type` accepts `circle`, `lemniscate`, or `helical`; lemniscate supports `inner_radius`/`outer_radius`, helical adds `pitch` and `turns`).
 - `reference.transition`: trapezoidal point-to-point planner that smooths manual setpoint changes (dt, max speed/acceleration, yaw behaviour).
 - `topics`: ROS topic names for state, motor speeds, and setpoint input.
 - `node`: execution rate and logging interval.
@@ -102,7 +102,7 @@ Shipped defaults (also pre-populated in `rqt_reconfigure`) now match the tuned r
 - Position weights `[10, 10, 8]`, velocity weights `[1, 1, 0.2]`, quaternion weights `[3.2 × 4]`, rate weights `[1.4, 1.4, 0.4]`.
 - Control penalty `1.75` per rotor and terminal weights `[5, 5, 3, 2, 2, 2, 12, 12, 12, 18.5, 2, 2, 1.8]`.
 - Thrust window `[0, 20]` N per motor; the default reference holds the vehicle at `(0, 0, 2.5)` with zero velocity.
-- Trajectory defaults: 3 m radius, 1 m altitude circular path centred at `(0, 0)`, clockwise direction, `max_speed = 0.2 m/s`, `linear_acceleration = 0.1 m/s²`, sampled at 20 Hz (`dt = 0.05`). Adjust `start_position_tolerance` to control how close the preparation stage must get before you start tracking.
+- Trajectory defaults: 3 m radius, 1 m altitude circular path centred at `(0, 0)`, clockwise direction, `max_speed = 0.2 m/s`, `linear_acceleration = 0.1 m/s²`, sampled at 20 Hz (`dt = 0.05`). Set `type: lemniscate` to fly a figure-eight (tune `inner_radius`/`outer_radius`), or `type: helical` to trace a rising helix (`pitch` per revolution and total `turns`). Adjust `start_position_tolerance` to control how close the preparation stage must get before you start tracking.
 - Transition planner defaults: enabled with `dt = 0.05`, `max_speed = 1.0 m/s`, `max_acceleration = 0.75 m/s²`, `max_yaw_rate = 1.0 rad/s`, `yaw_mode = interpolate`, and `distance_epsilon = 0.02 m`. Set `enabled: false` if you prefer the legacy “jump” behaviour for manual setpoints.
 
 `reference.trajectory` accepts two execution profiles:

@@ -40,7 +40,7 @@ reference:
   default_yaw: 0.0
   trajectory:
     enabled: true
-    type: circle
+    type: helical  # circle | lemniscate | helical
     radius: 3.0
     altitude: 1.0
     center: [0.0, 0.0]
@@ -53,7 +53,13 @@ reference:
     yaw_mode: fixed
     yaw_constant: 0.0
     yaw_offset: 0.0
-    dt: 0.03
+    dt: 0.05
+    # For lemniscate trajectories:
+    # inner_radius: 2.0
+    # outer_radius: 3.0
+    # For helical trajectories:
+    pitch: 0.5            # vertical rise per turn [m]
+    turns: 3.0
     # Call ~prepare_trajectory first to move to the start point, then ~start_trajectory to begin tracking.
     start_position_tolerance: 0.15
   transition:

@@ -21,7 +21,9 @@ from rotors_mpc_controller import (PositionNMPC, ReferenceGenerator,
                                    apply_dynamic_configuration,
                                    load_params)
 from rotors_mpc_controller.cfg import RotorsMPCConfig
-from rotors_mpc_controller.trajectory import generate_loop_reference
+from rotors_mpc_controller.trajectory import (generate_helical_reference,
+                                              generate_lemniscate_reference,
+                                              generate_loop_reference)
 
 
 
@@ -384,6 +386,10 @@ class MPCControllerNode:
 
         if traj_type == 'circle':
             trajectory_data = self._build_circular_trajectory(traj_cfg, dt)
+        elif traj_type == 'lemniscate':
+            trajectory_data = self._build_lemniscate_trajectory(traj_cfg, dt)
+        elif traj_type == 'helical':
+            trajectory_data = self._build_helical_trajectory(traj_cfg, dt)
         else:
             rospy.logwarn('mpc_controller_node: unsupported trajectory type %s', traj_type)
             return
@@ -427,6 +433,12 @@ class MPCControllerNode:
 
     def _build_circular_trajectory(self, cfg: dict, dt: float) -> dict[str, np.ndarray]:
         return generate_loop_reference(self._controller, cfg, dt)
+
+    def _build_lemniscate_trajectory(self, cfg: dict, dt: float) -> dict[str, np.ndarray]:
+        return generate_lemniscate_reference(self._controller, cfg, dt)
+
+    def _build_helical_trajectory(self, cfg: dict, dt: float) -> dict[str, np.ndarray]:
+        return generate_helical_reference(self._controller, cfg, dt)
 
     def _publish_reference_path(self,
                                 positions: np.ndarray | None,

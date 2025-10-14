@@ -30,19 +30,53 @@ class _QuadModel:
         ))
 
 
+def _quad_from_controller(controller: PositionNMPC) -> _QuadModel:
+    cfg = controller.config
+    return _QuadModel(
+        mass=float(controller.mass),
+        inertia=np.asarray(cfg.inertia, dtype=float).reshape(3),
+        x_offsets=np.asarray(cfg.rotor_x_offsets, dtype=float).reshape(4),
+        y_offsets=np.asarray(cfg.rotor_y_offsets, dtype=float).reshape(4),
+        z_torque=np.asarray(cfg.rotor_z_torque, dtype=float).reshape(4),
+        max_thrust=float(np.max(cfg.input_upper_bounds)),
+    )
+
+
+def _compute_yaw_profile(velocities: np.ndarray,
+                         dt: float,
+                         yaw_mode: str,
+                         yaw_offset: float,
+                         yaw_constant: float) -> tuple[np.ndarray, np.ndarray]:
+    dt = float(dt)
+    if dt <= 0.0:
+        raise ValueError('dt must be positive for yaw profile computation.')
+
+    vel = np.asarray(velocities, dtype=float)
+    if vel.ndim != 2 or vel.shape[0] < 2:
+        raise ValueError('velocities must have shape (3, N) or (2, N).')
+
+    yaw_mode = str(yaw_mode).lower()
+    if yaw_mode == 'follow':
+        heading = np.unwrap(np.arctan2(vel[1], vel[0]))
+        yaw = heading + float(yaw_offset)
+    else:
+        yaw = np.full(vel.shape[1], float(yaw_constant) + float(yaw_offset), dtype=float)
+
+    if yaw.size > 1:
+        edge_order = 2 if yaw.size > 2 else 1
+        yaw_rate = np.gradient(yaw, dt, edge_order=edge_order)
+    else:
+        yaw_rate = np.zeros_like(yaw)
+
+    return yaw, yaw_rate
+
+
 def generate_loop_reference(controller: PositionNMPC,
                             traj_cfg: Dict[str, object],
                             dt: float) -> Dict[str, np.ndarray]:
     """Generate a minimum-snap loop trajectory compatible with PositionNMPC."""
 
-    quad = _QuadModel(
-        mass=controller.mass,
-        inertia=np.asarray(controller.config.inertia, dtype=float).reshape(3),
-        x_offsets=np.asarray(controller.config.rotor_x_offsets, dtype=float).reshape(4),
-        y_offsets=np.asarray(controller.config.rotor_y_offsets, dtype=float).reshape(4),
-        z_torque=np.asarray(controller.config.rotor_z_torque, dtype=float).reshape(4),
-        max_thrust=float(np.max(controller.config.input_upper_bounds)),
-    )
+    quad = _quad_from_controller(controller)
 
     radius = float(traj_cfg.get('radius', 3.0))
     altitude = float(traj_cfg.get('altitude', 1.0))
@@ -83,6 +117,164 @@ def generate_loop_reference(controller: PositionNMPC,
 
     ref = _minimum_snap_reference(traj_derivs, yaw_derivs, t_ref, quad, gravity=controller.gravity)
     ref['dt'] = dt
+    return ref
+
+
+def generate_lemniscate_reference(controller: PositionNMPC,
+                                  traj_cfg: Dict[str, object],
+                                  dt: float) -> Dict[str, np.ndarray]:
+    quad = _quad_from_controller(controller)
+
+    base_radius = float(traj_cfg.get('radius', 3.0))
+    radius_outer = max(float(traj_cfg.get('outer_radius', base_radius)), 1e-3)
+    radius_inner = max(float(traj_cfg.get('inner_radius', base_radius * 0.6)), 1e-3)
+    altitude = float(traj_cfg.get('altitude', 1.0))
+    center = np.asarray(traj_cfg.get('center', [0.0, 0.0]), dtype=float).reshape(2)
+    revolutions = max(float(traj_cfg.get('revolutions', 1.0)), 0.1)
+    max_speed = max(float(traj_cfg.get('max_speed', 1.0)), 1e-3)
+    clockwise = bool(traj_cfg.get('clockwise', False))
+    yaw_mode = str(traj_cfg.get('yaw_mode', 'follow')).lower()
+    yaw_offset = float(traj_cfg.get('yaw_offset', 0.0))
+    yaw_constant = float(traj_cfg.get('yaw_constant', 0.0))
+
+    orientation = -1.0 if clockwise else 1.0
+    phi_end = 2.0 * np.pi * revolutions
+
+    phi_probe = np.linspace(0.0, phi_end, 1024, endpoint=False)
+    theta_probe = orientation * phi_probe
+    dpos_probe = np.vstack((
+        orientation * radius_outer * np.cos(theta_probe),
+        orientation * radius_inner * np.cos(2.0 * theta_probe),
+        np.zeros_like(theta_probe),
+    ))
+    max_norm = float(np.max(np.linalg.norm(dpos_probe, axis=0)))
+    if max_norm <= 1e-8:
+        raise ValueError('lemniscate trajectory derivative norm too small; adjust radii.')
+
+    omega = max_speed / max_norm
+    total_time = phi_end / omega
+    if not np.isfinite(total_time) or total_time <= 0.0:
+        raise ValueError('Computed lemniscate duration is invalid.')
+
+    dt_request = max(float(dt), 1e-3)
+    samples = max(64, int(np.ceil(total_time / dt_request))) + 1
+    dt_actual = total_time / (samples - 1)
+    times = np.linspace(0.0, total_time, samples, endpoint=True)
+    phi = times * omega
+    theta = orientation * phi
+
+    sin_theta = np.sin(theta)
+    cos_theta = np.cos(theta)
+    sin_double = np.sin(2.0 * theta)
+    cos_double = np.cos(2.0 * theta)
+
+    positions = np.vstack((
+        center[0] + radius_outer * sin_theta,
+        center[1] + radius_inner * sin_theta * cos_theta,
+        np.full_like(sin_theta, altitude),
+    ))
+    velocities = np.vstack((
+        orientation * radius_outer * cos_theta * omega,
+        orientation * radius_inner * cos_double * omega,
+        np.zeros_like(sin_theta),
+    ))
+    accelerations = np.vstack((
+        -radius_outer * sin_theta * omega ** 2,
+        -2.0 * radius_inner * sin_double * omega ** 2,
+        np.zeros_like(sin_theta),
+    ))
+    jerks = np.vstack((
+        -orientation * radius_outer * cos_theta * omega ** 3,
+        -4.0 * radius_inner * orientation * cos_double * omega ** 3,
+        np.zeros_like(sin_theta),
+    ))
+
+    yaw, yaw_rate = _compute_yaw_profile(velocities, dt_actual, yaw_mode, yaw_offset, yaw_constant)
+
+    traj_derivs = np.stack((positions, velocities, accelerations, jerks), axis=0)
+    yaw_derivs = np.vstack((yaw, yaw_rate))
+    t_ref = times
+
+    ref = _minimum_snap_reference(traj_derivs, yaw_derivs, t_ref, quad, gravity=controller.gravity)
+    ref['dt'] = dt_actual
+    return ref
+
+
+def generate_helical_reference(controller: PositionNMPC,
+                               traj_cfg: Dict[str, object],
+                               dt: float) -> Dict[str, np.ndarray]:
+    quad = _quad_from_controller(controller)
+
+    radius = max(float(traj_cfg.get('radius', 3.0)), 1e-3)
+    altitude = float(traj_cfg.get('altitude', 1.0))
+    pitch = float(traj_cfg.get('pitch', 0.5))
+    turns = max(float(traj_cfg.get('turns', traj_cfg.get('revolutions', 3.0))), 0.1)
+    max_speed = max(float(traj_cfg.get('max_speed', 1.0)), 1e-3)
+    center = np.asarray(traj_cfg.get('center', [0.0, 0.0]), dtype=float).reshape(2)
+    clockwise = bool(traj_cfg.get('clockwise', False))
+    yaw_mode = str(traj_cfg.get('yaw_mode', 'follow')).lower()
+    yaw_offset = float(traj_cfg.get('yaw_offset', 0.0))
+    yaw_constant = float(traj_cfg.get('yaw_constant', 0.0))
+
+    orientation = -1.0 if clockwise else 1.0
+    phi_end = 2.0 * np.pi * turns
+    pitch_per_rad = pitch / (2.0 * np.pi)
+
+    phi_probe = np.linspace(0.0, phi_end, 1024, endpoint=False)
+    theta_probe = orientation * phi_probe
+    dpos_probe = np.vstack((
+        -orientation * radius * np.sin(theta_probe),
+        orientation * radius * np.cos(theta_probe),
+        np.full_like(phi_probe, pitch_per_rad),
+    ))
+    max_norm = float(np.max(np.linalg.norm(dpos_probe, axis=0)))
+    if max_norm <= 1e-8:
+        raise ValueError('helical trajectory derivative norm too small; adjust radius or pitch.')
+
+    omega = max_speed / max_norm
+    total_time = phi_end / omega
+    if not np.isfinite(total_time) or total_time <= 0.0:
+        raise ValueError('Computed helical duration is invalid.')
+
+    dt_request = max(float(dt), 1e-3)
+    samples = max(64, int(np.ceil(total_time / dt_request))) + 1
+    dt_actual = total_time / (samples - 1)
+    times = np.linspace(0.0, total_time, samples, endpoint=True)
+    phi = times * omega
+    theta = orientation * phi
+
+    sin_theta = np.sin(theta)
+    cos_theta = np.cos(theta)
+
+    positions = np.vstack((
+        center[0] + radius * np.cos(theta),
+        center[1] + radius * np.sin(theta),
+        altitude + pitch_per_rad * phi,
+    ))
+    velocities = np.vstack((
+        -orientation * radius * sin_theta * omega,
+        orientation * radius * cos_theta * omega,
+        np.full_like(phi, pitch_per_rad * omega),
+    ))
+    accelerations = np.vstack((
+        -radius * cos_theta * omega ** 2,
+        -radius * sin_theta * omega ** 2,
+        np.zeros_like(phi),
+    ))
+    jerks = np.vstack((
+        radius * orientation * sin_theta * omega ** 3,
+        -radius * orientation * cos_theta * omega ** 3,
+        np.zeros_like(phi),
+    ))
+
+    yaw, yaw_rate = _compute_yaw_profile(velocities, dt_actual, yaw_mode, yaw_offset, yaw_constant)
+
+    traj_derivs = np.stack((positions, velocities, accelerations, jerks), axis=0)
+    yaw_derivs = np.vstack((yaw, yaw_rate))
+    t_ref = times
+
+    ref = _minimum_snap_reference(traj_derivs, yaw_derivs, t_ref, quad, gravity=controller.gravity)
+    ref['dt'] = dt_actual
     return ref
 
 
@@ -385,4 +577,4 @@ def _ensure_quaternion_continuity(prev: np.ndarray, current: np.ndarray) -> np.n
     return current if np.dot(prev, current) >= 0.0 else -current
 
 
-__all__ = ['generate_loop_reference']
+__all__ = ['generate_loop_reference', 'generate_lemniscate_reference', 'generate_helical_reference']
