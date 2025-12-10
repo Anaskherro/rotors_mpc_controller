@@ -136,7 +136,7 @@ Then follow the build steps above.
 ## Issues
 A common issue is the symbol lookup error: 
 ```bash
-gzserver: symbol lookup error: /home/hariharan/eth_ws/devel/lib/librotors_gazebo_multirotor_base_plugin.so: undefined symbol: _ZN14gz_sensor_msgs9ActuatorsC1Ev
+gzserver: symbol lookup error: /home/user/catkin_ws/devel/lib/librotors_gazebo_multirotor_base_plugin.so: undefined symbol: _ZN14gz_sensor_msgs9ActuatorsC1Ev
 ```
 This can be fixed by editing the file cmake file `rotors_gazebo_plugins/CMakeLists.txt` based on the following pull request : 
 [Fix cmake target libraries and linking so plugins work](https://github.com/ethz-asl/rotors_simulator/pull/667/files)
